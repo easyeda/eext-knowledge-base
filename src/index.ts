@@ -33,7 +33,7 @@ export async function openAISettings(): Promise<void> {
 
 export function about(): void {
 	eda.sys_Dialog.showInformationMessage(
-		'AI 知识库助手 v1.1.0\n\n导入 Markdown 文档，构建知识库，智能问答。\n基于 MiniMax AI 模型。',
+		'AI 知识库助手 v1.1.0\n\n导入 Markdown 文档，构建知识库，智能问答。\n。',
 		'关于 AI 助手',
 	);
 }

@@ -1,7 +1,10 @@
 # AI Local Knowledge Base
 
-EasyEDA Pro extension plugin — a RAG-based intelligent Q&A assistant powered by LangChain.js.  
+A RAG-based intelligent Q&A assistant powered by [LangChain.js](https://github.com/langchain-ai/langchainjs).  
 Import Markdown documents to build a knowledge base. When users ask questions, the system automatically retrieves relevant content and generates answers via AI models.
+
+Embedding model: [bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5)  
+Uses [hf-mirror](https://hf-mirror.com/) mirror by default for model downloads
 
 ## Features
 ✅ Built-in lightweight embedding model for custom knowledge base  
