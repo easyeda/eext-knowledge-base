@@ -1,7 +1,10 @@
 # AI 本地知识库
 
-嘉立创EDA 专业版扩展插件 — 基于 LangChain.js 的 RAG 智能问答助手。  
+基于 [LangChain.js](https://github.com/langchain-ai/langchainjs) 的 RAG 智能问答助手。  
 导入 Markdown 文档构建知识库，用户提问时自动检索相关内容，通过 AI 模型生成回答。
+
+嵌入模型：[bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5)  
+默认选用 [hf-mirror](https://hf-mirror.com/) 镜像站拉取
 
 ## 功能
 ✅ 本地嵌入小型向量模型，支持自建自定义知识库  
