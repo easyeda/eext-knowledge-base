@@ -5,15 +5,24 @@ import { Embeddings } from '@langchain/core/embeddings';
 
 const MODEL_NAME = 'Xenova/bge-small-zh-v1.5';
 
+/** 让出主线程，允许浏览器处理 UI 事件 */
+function yieldToMain(): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, 0));
+}
+
 export class LocalEmbeddings extends Embeddings {
 	private extractor: FeatureExtractionPipeline | null = null;
 	private loading: Promise<FeatureExtractionPipeline> | null = null;
 	private onProgress: ((info: string) => void) | null = null;
 
-	constructor(modelHost: string, params?: EmbeddingsParams & { onProgress?: (info: string) => void }) {
+	constructor(params?: EmbeddingsParams & { onProgress?: (info: string) => void }) {
 		super(params ?? {});
 		this.onProgress = params?.onProgress ?? null;
-		env.remoteHost = modelHost;
+
+		// 使用内置模型，禁用远程下载
+		env.allowRemoteModels = false;
+		env.allowLocalModels = true;
+		env.localModelPath = '/iframe/models/';
 	}
 
 	private async getExtractor(): Promise<FeatureExtractionPipeline> {
@@ -25,7 +34,7 @@ export class LocalEmbeddings extends Embeddings {
 		}
 
 		if (this.onProgress) {
-			this.onProgress('正在加载 Embedding 模型...');
+			this.onProgress('正在加载内置 Embedding 模型...');
 		}
 
 		this.loading = pipeline('feature-extraction', MODEL_NAME, {
@@ -34,22 +43,7 @@ export class LocalEmbeddings extends Embeddings {
 				if (!this.onProgress) {
 					return;
 				}
-				if (p.status === 'download' && p.file) {
-					const name = p.file.split('/').pop() || p.file;
-					this.onProgress(`正在下载模型文件: ${name}`);
-				}
-				else if (p.status === 'progress' && p.file) {
-					const name = p.file.split('/').pop() || p.file;
-					const pct = Math.round(p.progress || 0);
-					const loaded = p.loaded ? `${(p.loaded / 1024 / 1024).toFixed(1)}MB` : '';
-					const total = p.total ? `/${(p.total / 1024 / 1024).toFixed(1)}MB` : '';
-					this.onProgress(`下载 ${name}: ${pct}% ${loaded}${total}`);
-				}
-				else if (p.status === 'done' && p.file) {
-					const name = p.file.split('/').pop() || p.file;
-					this.onProgress(`已下载: ${name}`);
-				}
-				else if (p.status === 'ready') {
+				if (p.status === 'ready') {
 					this.onProgress('Embedding 模型加载完成');
 				}
 				else if (p.status === 'initiate') {
@@ -76,6 +70,10 @@ export class LocalEmbeddings extends Embeddings {
 			const output = await extractor(batch, { pooling: 'mean', normalize: true });
 			for (let j = 0; j < batch.length; j++) {
 				results.push(Array.from((output as any)[j].data));
+			}
+			// 每个批次之间让出主线程，避免长时间阻塞 UI
+			if (i + batchSize < documents.length) {
+				await yieldToMain();
 			}
 		}
 		return results;

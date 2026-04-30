@@ -9,5 +9,5 @@ export default antfu({
 
 	typescript: true,
 
-	ignores: ['build/dist/', 'coverage/', 'dist/', 'node_modules/', '.eslintcache', 'debug.log', 'iframe/app.js'],
+	ignores: ['build/dist/', 'coverage/', 'dist/', 'node_modules/', '.eslintcache', 'debug.log', 'iframe/app.js', 'iframe/src/builtin-vectors.json', 'iframe/docs/'],
 });
