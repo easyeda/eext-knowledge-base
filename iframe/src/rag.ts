@@ -25,13 +25,15 @@ export class RAGEngine {
 	private embeddings: LocalEmbeddings;
 	private splitter: RecursiveCharacterTextSplitter;
 	private allDocs: Document[] = [];
+	/** 与 allDocs 一一对应的向量缓存，避免删除/重建时重新 embedding */
+	private allVectors: number[][] = [];
 	private prebuiltCount = 0;
 	private chatHistory: Array<{ role: string; content: string }> = [];
 	public onStatus: ((msg: string) => void) | null = null;
 
-	constructor(modelHost: string, onStatus?: (msg: string) => void) {
+	constructor(onStatus?: (msg: string) => void) {
 		this.onStatus = onStatus ?? null;
-		this.embeddings = new LocalEmbeddings(modelHost, {
+		this.embeddings = new LocalEmbeddings({
 			onProgress: (msg) => {
 				if (this.onStatus) {
 					this.onStatus(msg);
@@ -58,6 +60,7 @@ export class RAGEngine {
 		const vectors: number[][] = entries.map(e => e.vector);
 
 		this.allDocs.push(...docs);
+		this.allVectors.push(...vectors);
 		this.prebuiltCount = entries.length;
 
 		if (!this.vectorStore) {
@@ -75,20 +78,44 @@ export class RAGEngine {
 			[content],
 			[{ source: name }],
 		);
+
+		// 先计算向量，缓存起来，再注入 store
+		const vectors = await this.embeddings.embedDocuments(
+			docs.map(d => d.pageContent),
+		);
+
 		this.allDocs.push(...docs);
+		this.allVectors.push(...vectors);
+
 		if (!this.vectorStore) {
 			this.vectorStore = new MemoryVectorStore(this.embeddings);
 		}
-		await this.vectorStore.addDocuments(docs);
+		await this.vectorStore.addVectors(vectors, docs);
 		return docs.length;
 	}
 
 	async removeDocument(name: string): Promise<void> {
-		this.allDocs = this.allDocs.filter(d => d.metadata.source !== name);
-		this.vectorStore = await MemoryVectorStore.fromDocuments(
-			this.allDocs,
-			this.embeddings,
-		);
+		await this.removeDocuments([name]);
+	}
+
+	async removeDocuments(names: string[]): Promise<void> {
+		const nameSet = new Set(names);
+		const filteredDocs: Document[] = [];
+		const filteredVectors: number[][] = [];
+		for (let i = 0; i < this.allDocs.length; i++) {
+			if (!nameSet.has(this.allDocs[i].metadata.source)) {
+				filteredDocs.push(this.allDocs[i]);
+				filteredVectors.push(this.allVectors[i]);
+			}
+		}
+		this.allDocs = filteredDocs;
+		this.allVectors = filteredVectors;
+
+		// 用已有向量直接重建 store，无需重新 embedding
+		this.vectorStore = new MemoryVectorStore(this.embeddings);
+		if (filteredDocs.length > 0) {
+			await this.vectorStore.addVectors(filteredVectors, filteredDocs);
+		}
 	}
 
 	async renameSource(oldName: string, newName: string): Promise<void> {
@@ -101,6 +128,7 @@ export class RAGEngine {
 
 	clear(): void {
 		this.allDocs = [];
+		this.allVectors = [];
 		this.vectorStore = null;
 		this.chatHistory = [];
 	}
