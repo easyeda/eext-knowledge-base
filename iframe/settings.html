@@ -27,16 +27,11 @@
 	</div>
 	<div class="field">
 		<label>模型名称</label>
-		<input type="text" id="cfg-model" value="MiniMax-M2.5" />
+		<input type="text" id="cfg-model" placeholder="例如 MiniMax-M2.5" />
 	</div>
 	<div class="field">
 		<label>API 地址</label>
-		<input type="text" id="cfg-baseurl" value="https://api.minimaxi.com/v1" />
-	</div>
-	<div class="field">
-		<label>Embedding 模型加载地址</label>
-		<input type="text" id="cfg-model-host" value="https://hf-mirror.com" />
-		<div class="hint">HuggingFace 镜像站，国内推荐 https://hf-mirror.com</div>
+		<input type="text" id="cfg-baseurl" placeholder="例如 https://api.minimaxi.com/v1" />
 	</div>
 	<div class="actions">
 		<button class="btn btn-primary" id="save-btn">💾 保存</button>
@@ -47,9 +42,8 @@
 		var cfgApiKey = document.getElementById('cfg-apikey');
 		var cfgModel = document.getElementById('cfg-model');
 		var cfgBaseURL = document.getElementById('cfg-baseurl');
-		var cfgModelHost = document.getElementById('cfg-model-host');
 		var saveBtn = document.getElementById('save-btn');
-		var status = document.getElementById('status');
+		var statusEl = document.getElementById('status');
 
 		// 加载
 		try {
@@ -57,9 +51,8 @@
 			if (raw) {
 				var obj = JSON.parse(raw);
 				cfgApiKey.value = obj.apiKey || '';
-				cfgModel.value = obj.model || 'MiniMax-M2.5';
-				cfgBaseURL.value = obj.baseURL || 'https://api.minimaxi.com/v1';
-				cfgModelHost.value = obj.modelHost || 'https://hf-mirror.com';
+				cfgModel.value = obj.model || '';
+				cfgBaseURL.value = obj.baseURL || '';
 			}
 		} catch(e) {}
 
@@ -67,13 +60,15 @@
 		saveBtn.addEventListener('click', function() {
 			var config = {
 				apiKey: cfgApiKey.value.trim(),
-				model: cfgModel.value.trim() || 'MiniMax-M2.5',
-				baseURL: cfgBaseURL.value.trim() || 'https://api.minimaxi.com/v1',
-				modelHost: cfgModelHost.value.trim() || 'https://hf-mirror.com',
+				model: cfgModel.value.trim(),
+				baseURL: cfgBaseURL.value.trim(),
 			};
 			localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-			status.textContent = '✅ 已保存，重新打开助手窗口生效';
-			setTimeout(function() { status.textContent = ''; }, 3000);
+			statusEl.textContent = '✅ 已保存，重新打开助手窗口生效';
+			setTimeout(function() { statusEl.textContent = ''; }, 3000);
+			try {
+				eda.sys_Message.showToastMessage('设置已保存，重新打开助手窗口生效', 0, 3);
+			} catch(e) {}
 		});
 	</script>
 </body>

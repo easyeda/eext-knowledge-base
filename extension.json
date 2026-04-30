@@ -3,7 +3,7 @@
 	"uuid": "fe9db7f3d27046ff92b3913de197736f",
 	"displayName": "AI 本地知识库",
 	"description": "嘉立创EDA & EasyEDA 专业版的AI本地RAG知识库，可自定义知识库内容，由AI检索",
-	"version": "1.4.1",
+	"version": "1.4.2",
 	"publisher": "JLCEDA",
 	"engines": {
 		"eda": "^3.0.0"
