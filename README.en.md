@@ -10,7 +10,7 @@ Uses [hf-mirror](https://hf-mirror.com/) mirror by default for model downloads
 ✅ Built-in lightweight embedding model for custom knowledge base
 ![alt text](images/1.gif)
 
-✅ Integrated with wiki.lceda.cn PCB design & manufacturing docs — ask anything about design and production
+✅ Integrate all documents from prodocs.lceda.cn, with instant Q&A for any issues encountered
 ![alt text](images/2.gif)
 
 ## Installation
