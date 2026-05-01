@@ -9,7 +9,7 @@
 ✅ 本地嵌入小型向量模型，支持自建自定义知识库
 ![alt text](images/1.gif)
 
-✅ 集成wiki.lceda.cn的PCB设计与生产文档，设计生产随问随答
+✅ 集成prodocs.lceda.cn全部文档，遇到问题随问随答
 ![alt text](images/2.gif)
 
 ## 安装
