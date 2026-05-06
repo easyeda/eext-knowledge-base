@@ -3,13 +3,17 @@
 基于 [LangChain.js](https://github.com/langchain-ai/langchainjs) 的 RAG 智能问答助手。
 导入 Markdown 文档构建知识库，用户提问时自动检索相关内容，通过 AI 模型生成回答。
 
-本扩展内置嵌入模型：[bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5)
+- 扩展内置嵌入模型：[bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5)
+- 浏览器无模型缓存时将默认从 [HF-Mirror](https://hf-mirror.com/) 镜像站拉取并缓存
+- 缓存后将不再依赖于网络，可接入 [Ollama](https://ollama.com/) 本地部署通用模型实现完全本地化
 
 ## 功能
-✅ 本地嵌入小型向量模型，支持自建自定义知识库
+### ✅ 本地嵌入小型向量模型，支持自建自定义知识库
+
 ![alt text](images/1.gif)
 
-✅ 集成prodocs.lceda.cn全部文档，遇到问题随问随答
+### ✅ 集成prodocs.lceda.cn全部文档，遇到问题随问随答
+
 ![alt text](images/2.gif)
 
 ## 安装
@@ -28,3 +32,4 @@
 - [LangChain.js](https://github.com/langchain-ai/langchainjs) — RAG 流程框架（MIT）
 - [Transformers.js](https://github.com/huggingface/transformers.js) — 浏览器端模型推理（Apache-2.0）
 - [bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5) — 中文嵌入模型（MIT）
+- [HF-Mirror](https://hf-mirror.com/) - Hungging Face国内镜像站

@@ -18,6 +18,10 @@ export interface RAGConfig {
 	apiKey: string;
 	baseURL: string;
 	model: string;
+	/** 模型镜像站地址，如 https://hf-mirror.com */
+	modelMirror?: string;
+	/** API 类型：openai 或 anthropic */
+	apiType?: 'openai' | 'anthropic';
 }
 
 export class RAGEngine {
@@ -31,7 +35,7 @@ export class RAGEngine {
 	private chatHistory: Array<{ role: string; content: string }> = [];
 	public onStatus: ((msg: string) => void) | null = null;
 
-	constructor(onStatus?: (msg: string) => void) {
+	constructor(onStatus?: (msg: string) => void, modelMirror?: string) {
 		this.onStatus = onStatus ?? null;
 		this.embeddings = new LocalEmbeddings({
 			onProgress: (msg) => {
@@ -39,6 +43,7 @@ export class RAGEngine {
 					this.onStatus(msg);
 				}
 			},
+			modelMirror,
 		});
 		this.splitter = new RecursiveCharacterTextSplitter({
 			chunkSize: 1000,
@@ -182,7 +187,7 @@ export class RAGEngine {
 			userMsg,
 		];
 
-		const answer = await callMiniMaxAPI(config, apiMessages, onChunk);
+		const answer = await callAPI(config, apiMessages, onChunk);
 		this.chatHistory.push({ role: 'user', content: question });
 		this.chatHistory.push({ role: 'assistant', content: answer });
 
@@ -190,7 +195,21 @@ export class RAGEngine {
 	}
 }
 
-async function callMiniMaxAPI(
+/** 统一 API 调用入口 */
+async function callAPI(
+	config: RAGConfig,
+	messages: Array<{ role: string; content: string }>,
+	onChunk?: (text: string) => void,
+): Promise<string> {
+	const apiType = config.apiType || 'openai';
+	if (apiType === 'anthropic') {
+		return callAnthropicAPI(config, messages, onChunk);
+	}
+	return callOpenAIAPI(config, messages, onChunk);
+}
+
+/** OpenAI 兼容格式 API（包括 MiniMax、DeepSeek 等） */
+async function callOpenAIAPI(
 	config: RAGConfig,
 	messages: Array<{ role: string; content: string }>,
 	onChunk?: (text: string) => void,
@@ -266,6 +285,97 @@ async function callMiniMaxAPI(
 				if (delta) {
 					fullText += delta;
 					onChunk!(delta);
+				}
+			}
+			catch {
+				// 忽略解析错误
+			}
+		}
+	}
+
+	return fullText;
+}
+
+/** Anthropic API 格式（Claude 等） */
+async function callAnthropicAPI(
+	config: RAGConfig,
+	messages: Array<{ role: string; content: string }>,
+	onChunk?: (text: string) => void,
+): Promise<string> {
+	// Anthropic API 要求 system 消息单独传递
+	const systemMessage = messages.find(m => m.role === 'system')?.content || '';
+	const chatMessages = messages.filter(m => m.role !== 'system');
+
+	const url = `${config.baseURL.replace(/\/$/, '')}/messages`;
+	const useStream = !!onChunk;
+	const body = JSON.stringify({
+		model: config.model,
+		max_tokens: 2048,
+		system: systemMessage,
+		messages: chatMessages,
+		stream: useStream,
+	});
+
+	const headers: Record<string, string> = {
+		'Content-Type': 'application/json',
+		'x-api-key': config.apiKey,
+		'anthropic-version': '2023-06-01',
+	};
+
+	let response: Response;
+	if (typeof eda !== 'undefined' && eda.sys_ClientUrl) {
+		response = await eda.sys_ClientUrl.request(url, 'POST', body, { headers });
+	}
+	else {
+		response = await fetch(url, { method: 'POST', headers, body });
+	}
+
+	if (!response.ok) {
+		const errText = await response.text();
+		throw new Error(`API 错误 (${response.status}): ${errText}`);
+	}
+
+	if (!useStream) {
+		const data = await response.json();
+		if (!data.content || !data.content.length) {
+			throw new Error('API 返回数据异常');
+		}
+		return data.content[0].text;
+	}
+
+	// 流式读取
+	const reader = response.body?.getReader();
+	if (!reader) {
+		throw new Error('流式响应不可用');
+	}
+
+	const decoder = new TextDecoder();
+	let fullText = '';
+	let buffer = '';
+
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) {
+			break;
+		}
+
+		buffer += decoder.decode(value, { stream: true });
+		const lines = buffer.split('\n');
+		buffer = lines.pop() || '';
+
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed || !trimmed.startsWith('data: ')) {
+				continue;
+			}
+			const data = trimmed.slice(6);
+			try {
+				const json = JSON.parse(data);
+				// Anthropic 流式格式: { type: "content_block_delta", delta: { text: "..." } }
+				if (json.type === 'content_block_delta' && json.delta?.text) {
+					const text = json.delta.text;
+					fullText += text;
+					onChunk!(text);
 				}
 			}
 			catch {
