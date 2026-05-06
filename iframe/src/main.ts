@@ -1,4 +1,5 @@
 import type { RAGConfig } from './rag';
+import { marked } from 'marked';
 import { builtinVectors } from './builtin-docs';
 import { RAGEngine } from './rag';
 
@@ -15,14 +16,16 @@ function loadConfig(): RAGConfig {
 		if (raw) {
 			const obj = JSON.parse(raw);
 			return {
+				apiType: obj.apiType || 'openai',
 				apiKey: obj.apiKey || '',
 				model: obj.model || '',
 				baseURL: obj.baseURL || '',
+				modelMirror: obj.modelMirror || '',
 			};
 		}
 	}
 	catch { /* ignore */ }
-	return { apiKey: '', model: '', baseURL: '' };
+	return { apiType: 'openai', apiKey: '', model: '', baseURL: '', modelMirror: '' };
 }
 
 // ============================================================
@@ -98,7 +101,7 @@ function ensureFolder(parent: DocNode[], parentPath: string, segments: string[])
 const config = loadConfig();
 const engine = new RAGEngine((msg) => {
 	addSystemMessage(`【Think】 ${msg}`);
-});
+}, config.modelMirror);
 
 // ============================================================
 // DOM
@@ -348,6 +351,7 @@ async function handleSend(): Promise<void> {
 		msgDiv.className = 'message assistant';
 
 		let streamStarted = false;
+		let fullContent = '';
 
 		const { sources } = await engine.ask(question, cfg, (chunk) => {
 			if (!streamStarted) {
@@ -355,7 +359,8 @@ async function handleSend(): Promise<void> {
 				chatMessages.appendChild(msgDiv);
 				streamStarted = true;
 			}
-			msgDiv.textContent += chunk;
+			fullContent += chunk;
+			msgDiv.innerHTML = renderMarkdown(fullContent);
 			chatMessages.scrollTop = chatMessages.scrollHeight;
 		});
 
@@ -385,10 +390,22 @@ async function handleSend(): Promise<void> {
 // ============================================================
 // UI 渲染
 // ============================================================
+/** 渲染 Markdown 内容为 HTML */
+function renderMarkdown(text: string): string {
+	return marked.parse(text, { async: false }) as string;
+}
+
 function addMessage(role: string, content: string, sources?: string[]): void {
 	const div = document.createElement('div');
 	div.className = `message ${role}`;
-	div.textContent = content;
+
+	// assistant 消息渲染 Markdown
+	if (role === 'assistant') {
+		div.innerHTML = renderMarkdown(content);
+	}
+	else {
+		div.textContent = content;
+	}
 
 	if (sources && sources.length > 0) {
 		const srcDiv = document.createElement('div');

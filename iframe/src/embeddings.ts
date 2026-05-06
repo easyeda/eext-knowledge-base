@@ -15,14 +15,18 @@ export class LocalEmbeddings extends Embeddings {
 	private loading: Promise<FeatureExtractionPipeline> | null = null;
 	private onProgress: ((info: string) => void) | null = null;
 
-	constructor(params?: EmbeddingsParams & { onProgress?: (info: string) => void }) {
+	constructor(params?: EmbeddingsParams & { onProgress?: (info: string) => void; modelMirror?: string }) {
 		super(params ?? {});
 		this.onProgress = params?.onProgress ?? null;
 
-		// 使用内置模型，禁用远程下载
-		env.allowRemoteModels = false;
+		// 优先使用本地模型，本地不存在时允许从远端下载
 		env.allowLocalModels = true;
 		env.localModelPath = '/iframe/models/';
+		env.allowRemoteModels = true;
+
+		// 设置模型镜像站，默认使用 hf-mirror.com
+		env.remoteHost = params?.modelMirror || 'https://hf-mirror.com';
+		env.remotePathTemplate = '{model}/resolve/{revision}/';
 	}
 
 	private async getExtractor(): Promise<FeatureExtractionPipeline> {
