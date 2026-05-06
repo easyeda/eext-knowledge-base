@@ -7,6 +7,8 @@ Import Markdown documents to build a knowledge base. When users ask questions, t
 - When the browser has no model cache, it will download from [HF-Mirror](https://hf-mirror.com/) by default and cache it
 - Once cached, it no longer depends on the network. You can integrate with [Ollama](https://ollama.com/) locally deployed general models for complete local deployment
 
+**Only supports browsers with Chromium kernel such as Edge and Chrome, as well as EasyEDA Professional Edition client**
+
 ## Features
 ### ✅ Built-in lightweight embedding model for custom knowledge base
 
