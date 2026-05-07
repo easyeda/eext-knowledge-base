@@ -60,7 +60,7 @@ export class RAGEngine {
 		}
 		const docs: Document[] = entries.map(e => ({
 			pageContent: e.text,
-			metadata: { source: `[内置] ${e.source}` },
+			metadata: { source: `${e.source}` },
 		}));
 		const vectors: number[][] = entries.map(e => e.vector);
 
