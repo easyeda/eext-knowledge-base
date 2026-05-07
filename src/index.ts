@@ -22,7 +22,7 @@ export async function openAIAssistant(): Promise<void> {
 
 export async function openAISettings(): Promise<void> {
 	try {
-		await eda.sys_IFrame.openIFrame('/iframe/settings.html', 420, 400, 'ai-settings', {
+		await eda.sys_IFrame.openIFrame('/iframe/settings.html', 420, 490, 'ai-settings', {
 			title: '设置',
 		});
 	}

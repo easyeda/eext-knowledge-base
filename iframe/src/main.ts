@@ -9,6 +9,37 @@ declare const eda: any;
 // 配置
 // ============================================================
 const STORAGE_KEY = 'ai_assistant_config';
+const KB_STATE_KEY = 'ai_assistant_kb_state';
+
+/** 知识库状态持久化 */
+interface KBState {
+	/** 已删除的内置知识库 source keys */
+	deletedSources: string[];
+	/** 用户导入的文档（source key -> content） */
+	userDocuments: Record<string, string>;
+	/** 导入计数器 */
+	importCounter: number;
+}
+
+function loadKBState(): KBState {
+	try {
+		const raw = localStorage.getItem(KB_STATE_KEY);
+		if (raw) {
+			return JSON.parse(raw);
+		}
+	}
+	catch { /* ignore */ }
+	return { deletedSources: [], userDocuments: {}, importCounter: 1 };
+}
+
+function saveKBState(state: KBState): void {
+	try {
+		localStorage.setItem(KB_STATE_KEY, JSON.stringify(state));
+	}
+	catch { /* ignore */ }
+}
+
+let kbState = loadKBState();
 
 function loadConfig(): RAGConfig {
 	try {
@@ -42,6 +73,26 @@ interface DocNode {
 
 const rootNodes: DocNode[] = [];
 let importCounter = 1;
+
+/** 标记 source 为已删除 */
+function markSourceDeleted(source: string): void {
+	if (!kbState.deletedSources.includes(source)) {
+		kbState.deletedSources.push(source);
+		saveKBState(kbState);
+	}
+}
+
+/** 保存用户文档 */
+function saveUserDocument(sourceKey: string, content: string): void {
+	kbState.userDocuments[sourceKey] = content;
+	saveKBState(kbState);
+}
+
+/** 删除用户文档 */
+function removeUserDocument(sourceKey: string): void {
+	delete kbState.userDocuments[sourceKey];
+	saveKBState(kbState);
+}
 
 function getSourceKey(folderPath: string, file: string): string {
 	return `${folderPath}/${file}`;
@@ -121,6 +172,9 @@ addSystemMessage('欢迎使用 AI 知识库助手！');
 if (!config.apiKey || !config.model || !config.baseURL) {
 	addSystemMessage('【WARN】 请在菜单「Settings...」中配置 API Key、模型名称和 API 地址。');
 }
+
+// 先加载用户文档（已在内存中），再加载内置知识库
+loadUserDocuments();
 loadBuiltinDocs();
 
 fileInput.addEventListener('change', handleFileUpload);
@@ -140,24 +194,76 @@ async function loadBuiltinDocs(): Promise<void> {
 	if (builtinVectors.length === 0) {
 		return;
 	}
+	// 过滤掉已删除的内置文档
+	const filteredVectors = builtinVectors.filter(v => !kbState.deletedSources.includes(v.source));
+
 	try {
-		const count = await engine.loadPrebuiltVectors(builtinVectors);
-		// 按路径分组到树形结构
-		for (const v of builtinVectors) {
-			const parts = v.source.split('/');
-			const file = parts.pop()!;
-			const folderSegments = parts.length > 0 ? parts : ['内置知识库'];
-			const folder = ensureFolder(rootNodes, '', folderSegments);
-			if (!folder.files.includes(file)) {
-				folder.files.push(file);
+		if (filteredVectors.length > 0) {
+			const count = await engine.loadPrebuiltVectors(filteredVectors);
+			// 按路径分组到树形结构
+			for (const v of filteredVectors) {
+				const parts = v.source.split('/');
+				const file = parts.pop()!;
+				const folderSegments = parts.length > 0 ? parts : ['内置知识库'];
+				const folder = ensureFolder(rootNodes, '', folderSegments);
+				if (!folder.files.includes(file)) {
+					folder.files.push(file);
+				}
 			}
+			addSystemMessage(`【Model】 已加载内置知识库（${count} 个文档块）。可继续导入更多文档。`);
+		}
+		else {
+			addSystemMessage('【Model】 内置知识库已清空。可导入文档构建自定义知识库。');
 		}
 		renderDocList();
-		addSystemMessage(`【Model】 已加载内置知识库（${count} 个文档块）。可继续导入更多文档。`);
 	}
 	catch {
 		addSystemMessage('【WARN】 内置知识库加载失败');
 	}
+}
+
+// ============================================================
+// 用户文档
+// ============================================================
+async function loadUserDocuments(): Promise<void> {
+	const entries = Object.entries(kbState.userDocuments);
+	if (entries.length === 0) {
+		return;
+	}
+
+	// 按 source key 路径分组
+	const folderMap = new Map<string, Array<{ file: string; content: string }>>();
+	for (const [sourceKey, content] of entries) {
+		const parts = sourceKey.split('/');
+		const file = parts.pop()!;
+		const folderPath = parts.join('/');
+		if (!folderMap.has(folderPath)) {
+			folderMap.set(folderPath, []);
+		}
+		folderMap.get(folderPath)!.push({ file, content });
+	}
+
+	// 加载每个文件夹
+	for (const [folderPath, files] of folderMap) {
+		const folderSegments = folderPath.split('/').filter(Boolean);
+		const folder = ensureFolder(rootNodes, '', folderSegments);
+
+		for (const { file, content } of files) {
+			try {
+				const sourceKey = getSourceKey(folderPath, file);
+				await engine.addDocument(sourceKey, content);
+				if (!folder.files.includes(file)) {
+					folder.files.push(file);
+				}
+			}
+			catch {
+				addSystemMessage(`【WARN】 加载用户文档失败: ${file}`);
+			}
+		}
+	}
+
+	renderDocList();
+	importCounter = kbState.importCounter;
 }
 
 // ============================================================
@@ -181,6 +287,8 @@ async function handleFileUpload(e: Event): Promise<void> {
 			const chunks = await engine.addDocument(sourceKey, text);
 			folder.files.push(file.name);
 			totalChunks += chunks;
+			// 持久化用户文档
+			saveUserDocument(sourceKey, text);
 		}
 		catch {
 			addSystemMessage(`读取文件失败: ${file.name}`);
@@ -190,6 +298,10 @@ async function handleFileUpload(e: Event): Promise<void> {
 	if (folder.files.length > 0) {
 		rootNodes.push(folder);
 	}
+
+	// 保存导入计数器
+	kbState.importCounter = importCounter;
+	saveKBState(kbState);
 
 	renderDocList();
 	addSystemMessage(`已导入 ${files.length} 个文件到「${folderName}」，共 ${totalChunks} 个文档块。`);
@@ -277,6 +389,15 @@ function deleteNode(node: DocNode, parentArray: DocNode[]): void {
 			if (sourceKeys.length > 0) {
 				await engine.removeDocuments(sourceKeys);
 			}
+			// 标记为已删除（用于内置知识库）或从用户文档中移除
+			for (const key of sourceKeys) {
+				if (kbState.userDocuments[key]) {
+					removeUserDocument(key);
+				}
+				else {
+					markSourceDeleted(key);
+				}
+			}
 			const idx = parentArray.indexOf(node);
 			if (idx >= 0) {
 				parentArray.splice(idx, 1);
@@ -301,6 +422,13 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 			eda.sys_Message.showToastMessage('正在删除，请勿关闭页面或浏览器...', 1, 3);
 			const sourceKey = getSourceKey(node.path, file);
 			await engine.removeDocuments([sourceKey]);
+			// 标记为已删除（用于内置知识库）或从用户文档中移除
+			if (kbState.userDocuments[sourceKey]) {
+				removeUserDocument(sourceKey);
+			}
+			else {
+				markSourceDeleted(sourceKey);
+			}
 			node.files.splice(fileIdx, 1);
 			// 如果文件夹空了（无文件也无子文件夹），移除节点
 			if (node.files.length === 0 && node.children.length === 0) {
@@ -513,6 +641,9 @@ function handleClearKB(): void {
 			rootNodes.length = 0;
 			importCounter = 1;
 			engine.clear();
+			// 清空持久化状态
+			kbState = { deletedSources: [], userDocuments: {}, importCounter: 1 };
+			saveKBState(kbState);
 			renderDocList();
 			chatMessages.innerHTML = '';
 			addSystemMessage('知识库已清空。');
