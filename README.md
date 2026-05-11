@@ -1,5 +1,7 @@
 # AI 本地知识库
 
+[English](./README.en.md)
+
 基于 [LangChain.js](https://github.com/langchain-ai/langchainjs) 的 RAG 智能问答助手。
 导入 Markdown 文档构建知识库，用户提问时自动检索相关内容，通过 AI 模型生成回答。
 
