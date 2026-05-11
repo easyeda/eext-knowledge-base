@@ -1,5 +1,7 @@
 # AI Local Knowledge Base
 
+[中文](./README.md)
+
 A RAG-based intelligent Q&A assistant powered by [LangChain.js](https://github.com/langchain-ai/langchainjs).
 Import Markdown documents to build a knowledge base. When users ask questions, the system automatically retrieves relevant content and generates answers via AI models.
 
