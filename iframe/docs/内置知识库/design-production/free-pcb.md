@@ -21,7 +21,7 @@
 ![](/storage/images/zh-hans/document/index/index_20240619_172756.png)
 
  </center>
-
+ 
 3. 此时DRC为0错误0警告，点击确认，进入PCB下单界面。
 <center>
 

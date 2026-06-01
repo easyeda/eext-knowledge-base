@@ -1,5 +1,21 @@
 import esbuild from 'esbuild';
 
+// 1. Build worker first
+esbuild.buildSync({
+	entryPoints: ['iframe/src/local-llm-worker.ts'],
+	bundle: true,
+	outfile: 'iframe/local-llm-worker.bundle.txt',
+	format: 'esm',
+	platform: 'browser',
+	target: 'es2020',
+	minify: false,
+	sourcemap: false,
+	define: {
+		'process.env.NODE_ENV': '"production"',
+	},
+});
+
+// 2. Build main app (imports worker bundle as text)
 esbuild.buildSync({
 	entryPoints: ['iframe/src/main.ts'],
 	bundle: true,
@@ -11,6 +27,7 @@ esbuild.buildSync({
 	sourcemap: false,
 	loader: {
 		'.md': 'text',
+		'.txt': 'text',
 	},
 	define: {
 		'process.env.NODE_ENV': '"production"',

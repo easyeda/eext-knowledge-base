@@ -17,6 +17,11 @@
 		.btn-primary { background: #4a90d9; color: #fff; }
 		.btn-primary:hover { background: #357abd; }
 		#status { margin-top: 8px; font-size: 12px; color: #28a745; min-height: 18px; }
+		.advanced-section { margin-top: 12px; border: 1px solid #ddd; border-radius: 4px; padding: 8px 12px; background: #fafafa; }
+		.advanced-section summary { font-size: 13px; color: #555; cursor: pointer; padding: 4px 0; }
+		.advanced-section .field { margin-top: 10px; }
+		.checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #333; cursor: pointer; }
+		.checkbox-label input[type="checkbox"] { width: auto; margin: 0; }
 	</style>
 </head>
 <body>
@@ -40,11 +45,36 @@
 		<label>API 地址</label>
 		<input type="text" id="cfg-baseurl" placeholder="例如 https://api.openai.com/v1" />
 	</div>
-	<div class="field">
-		<label>模型镜像站</label>
-		<input type="text" id="cfg-modelmirror" placeholder="例如 https://huggingface.co" />
-		<div class="hint">用于下载 Embedding 模型，留空则使用默认镜像站 https://hf-mirror.com</div>
-	</div>
+	<details class="advanced-section">
+		<summary>高级设置</summary>
+		<div class="field">
+			<label>Embedding 模型</label>
+			<input type="text" id="cfg-embedding-model" placeholder="Xenova/bge-large-zh-v1.5" />
+			<div class="hint">用于文档向量化的模型，留空使用默认 Xenova/bge-large-zh-v1.5</div>
+		</div>
+		<div class="field">
+			<label>本地 AI 模型</label>
+			<input type="text" id="cfg-local-model" placeholder="onnx-community/Qwen2.5-0.5B-Instruct" />
+			<div class="hint">本地推理模型，留空使用默认 onnx-community/Qwen2.5-0.5B-Instruct</div>
+		</div>
+		<div class="field">
+			<label>模型镜像站</label>
+			<input type="text" id="cfg-modelmirror" placeholder="https://hf-mirror.com" />
+			<div class="hint">用于下载 Embedding 和本地 AI 模型，留空使用默认 https://hf-mirror.com</div>
+		</div>
+		<div class="field">
+			<label class="checkbox-label">
+				<input type="checkbox" id="cfg-enable-thinking" />
+				启用思考模式
+			</label>
+			<div class="hint">开启后在 API 请求中添加 enable_thinking 参数（适用于 Qwen3 等支持思考模式的模型）</div>
+		</div>
+		<div class="field">
+			<label>上下文轮数</label>
+			<input type="number" id="cfg-history-rounds" min="0" max="20" placeholder="3" />
+			<div class="hint">携带最近 N 轮对话作为上下文，留空默认 3 轮，设为 0 则不携带历史</div>
+		</div>
+	</details>
 	<div class="actions">
 		<button class="btn btn-primary" id="save-btn">💾 保存</button>
 	</div>
@@ -55,7 +85,11 @@
 		var cfgApiKey = document.getElementById('cfg-apikey');
 		var cfgModel = document.getElementById('cfg-model');
 		var cfgBaseURL = document.getElementById('cfg-baseurl');
+		var cfgEmbeddingModel = document.getElementById('cfg-embedding-model');
+		var cfgLocalModel = document.getElementById('cfg-local-model');
 		var cfgModelMirror = document.getElementById('cfg-modelmirror');
+		var cfgEnableThinking = document.getElementById('cfg-enable-thinking');
+		var cfgHistoryRounds = document.getElementById('cfg-history-rounds');
 		var saveBtn = document.getElementById('save-btn');
 		var statusEl = document.getElementById('status');
 
@@ -68,7 +102,11 @@
 				cfgApiKey.value = obj.apiKey || '';
 				cfgModel.value = obj.model || '';
 				cfgBaseURL.value = obj.baseURL || '';
+				cfgEmbeddingModel.value = obj.embeddingModel || '';
+				cfgLocalModel.value = obj.localModel || '';
 				cfgModelMirror.value = obj.modelMirror || '';
+				cfgEnableThinking.checked = !!obj.enableThinking;
+				cfgHistoryRounds.value = obj.historyRounds !== undefined ? String(obj.historyRounds) : '';
 			}
 		} catch(e) {}
 
@@ -79,7 +117,11 @@
 				apiKey: cfgApiKey.value.trim(),
 				model: cfgModel.value.trim(),
 				baseURL: cfgBaseURL.value.trim(),
+				embeddingModel: cfgEmbeddingModel.value.trim(),
+				localModel: cfgLocalModel.value.trim(),
 				modelMirror: cfgModelMirror.value.trim(),
+				enableThinking: cfgEnableThinking.checked,
+				historyRounds: cfgHistoryRounds.value.trim() === '' ? undefined : parseInt(cfgHistoryRounds.value, 10),
 			};
 			localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
 			statusEl.textContent = '✅ 已保存，重新打开助手窗口生效';

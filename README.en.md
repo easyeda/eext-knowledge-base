@@ -3,7 +3,7 @@
 A RAG-based intelligent Q&A assistant powered by [LangChain.js](https://github.com/langchain-ai/langchainjs).
 Import Markdown documents to build a knowledge base. When users ask questions, the system automatically retrieves relevant content and generates answers via AI models.
 
-- Built-in embedding model: [bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5)
+- Built-in embedding model: [bge-large-zh-v1.5](https://huggingface.co/BAAI/bge-large-zh-v1.5)
 - When the browser has no model cache, it will download from [HF-Mirror](https://hf-mirror.com/) by default and cache it
 - Once cached, it no longer depends on the network. You can integrate with [Ollama](https://ollama.com/) locally deployed general models for complete local deployment
 
@@ -33,5 +33,5 @@ Import Markdown documents to build a knowledge base. When users ask questions, t
 
 - [LangChain.js](https://github.com/langchain-ai/langchainjs) — RAG framework (MIT)
 - [Transformers.js](https://github.com/huggingface/transformers.js) — Browser-side model inference (Apache-2.0)
-- [bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5) — Chinese embedding model (MIT)
+- [bge-large-zh-v1.5](https://huggingface.co/BAAI/bge-large-zh-v1.5) — Chinese embedding model (MIT)
 - [HF-Mirror](https://hf-mirror.com/) — Hugging Face mirror for China

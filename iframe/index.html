@@ -19,11 +19,31 @@
 			<button id="clear-kb" class="btn-danger" style="display:none;">清空知识库</button>
 		</div>
 		<div id="main">
+			<div id="mode-bar">
+				<span class="mode-label">模式:</span>
+				<button id="mode-api" class="mode-btn active" title="使用在线 AI API 生成回答">🌐 在线AI问答</button>
+				<button id="mode-local" class="mode-btn" title="使用本地AI模型生成回答（无需API Key）">🖥️ 本地AI</button>
+				<button id="mode-index" class="mode-btn" title="仅检索知识库，返回匹配片段">🔍 关键词检索</button>
+			</div>
 			<div id="chat-messages"></div>
 			<div id="input-area">
 				<textarea id="user-input" placeholder="输入你的问题..." rows="2"></textarea>
 				<button id="send-btn">发送</button>
+				<button id="stop-btn" style="display:none;">停止</button>
 			</div>
+		</div>
+	</div>
+	<!-- 文档预览弹窗 -->
+	<div id="preview-modal" class="modal">
+		<div class="modal-content">
+			<div class="modal-header">
+				<span id="preview-title" class="modal-title"></span>
+				<div class="modal-actions">
+					<a id="preview-visit" class="modal-visit" target="_blank" rel="noopener noreferrer">🌐 访问在线文档</a>
+					<button id="preview-close" class="modal-close">✕</button>
+				</div>
+			</div>
+			<div id="preview-body" class="modal-body"></div>
 		</div>
 	</div>
 	<script src="/iframe/app.js"></script>

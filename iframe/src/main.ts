@@ -1,6 +1,7 @@
 import type { RAGConfig } from './rag';
 import { marked } from 'marked';
 import { builtinVectors } from './builtin-docs';
+import { LocalLLM } from './local-llm';
 import { RAGEngine } from './rag';
 
 declare const eda: any;
@@ -41,7 +42,7 @@ function saveKBState(state: KBState): void {
 
 let kbState = loadKBState();
 
-function loadConfig(): RAGConfig {
+function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: string; localDtype?: string } {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (raw) {
@@ -52,11 +53,16 @@ function loadConfig(): RAGConfig {
 				model: obj.model || '',
 				baseURL: obj.baseURL || '',
 				modelMirror: obj.modelMirror || '',
+				embeddingModel: obj.embeddingModel || '',
+				localModel: obj.localModel || '',
+				localDtype: obj.localDtype || '',
+				enableThinking: !!obj.enableThinking,
+				historyRounds: obj.historyRounds !== undefined ? obj.historyRounds : 3,
 			};
 		}
 	}
 	catch { /* ignore */ }
-	return { apiType: 'openai', apiKey: '', model: '', baseURL: '', modelMirror: '' };
+	return { apiType: 'openai', apiKey: '', model: '', baseURL: '', modelMirror: '', embeddingModel: '', localModel: '', localDtype: '', enableThinking: false, historyRounds: 3 };
 }
 
 // ============================================================
@@ -152,7 +158,7 @@ function ensureFolder(parent: DocNode[], parentPath: string, segments: string[])
 const config = loadConfig();
 const engine = new RAGEngine((msg) => {
 	addSystemMessage(`【Think】 ${msg}`);
-}, config.modelMirror);
+}, config.modelMirror, config.embeddingModel);
 
 // ============================================================
 // DOM
@@ -164,6 +170,33 @@ const clearKbBtn = document.getElementById('clear-kb') as HTMLButtonElement;
 const chatMessages = document.getElementById('chat-messages')!;
 const userInput = document.getElementById('user-input') as HTMLTextAreaElement;
 const sendBtn = document.getElementById('send-btn') as HTMLButtonElement;
+const stopBtn = document.getElementById('stop-btn') as HTMLButtonElement;
+const modeApiBtn = document.getElementById('mode-api') as HTMLButtonElement;
+const modeLocalBtn = document.getElementById('mode-local') as HTMLButtonElement;
+const modeIndexBtn = document.getElementById('mode-index') as HTMLButtonElement;
+const previewModal = document.getElementById('preview-modal')!;
+const previewTitle = document.getElementById('preview-title')!;
+const previewBody = document.getElementById('preview-body')!;
+const previewClose = document.getElementById('preview-close') as HTMLButtonElement;
+const previewVisit = document.getElementById('preview-visit') as HTMLAnchorElement;
+
+// ============================================================
+// 模式管理
+// ============================================================
+type SearchMode = 'api' | 'local' | 'index';
+let currentMode: SearchMode = 'api';
+
+function setMode(mode: SearchMode): void {
+	currentMode = mode;
+	modeApiBtn.classList.toggle('active', mode === 'api');
+	modeLocalBtn.classList.toggle('active', mode === 'local');
+	modeIndexBtn.classList.toggle('active', mode === 'index');
+	userInput.placeholder = mode === 'api'
+		? '输入你的问题...'
+		: mode === 'local'
+			? '输入你的问题（本地AI推理）...'
+			: '输入关键词检索知识库...';
+}
 
 // ============================================================
 // 初始化
@@ -184,6 +217,26 @@ userInput.addEventListener('keydown', (e) => {
 	if (e.key === 'Enter' && !e.shiftKey) {
 		e.preventDefault();
 		handleSend();
+	}
+});
+
+// 模式切换事件
+modeApiBtn.addEventListener('click', () => setMode('api'));
+modeLocalBtn.addEventListener('click', () => setMode('local'));
+modeIndexBtn.addEventListener('click', () => setMode('index'));
+
+// 预览弹窗关闭事件
+previewClose.addEventListener('click', closePreviewModal);
+previewModal.addEventListener('click', (e) => {
+	if (e.target === previewModal) {
+		closePreviewModal();
+	}
+});
+
+// ESC 关闭预览弹窗
+document.addEventListener('keydown', (e) => {
+	if (e.key === 'Escape' && previewModal.classList.contains('show')) {
+		closePreviewModal();
 	}
 });
 
@@ -446,20 +499,35 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 // ============================================================
 // RAG 问答
 // ============================================================
+let currentAbortController: AbortController | null = null;
+let stopped = false;
+let localLLM: LocalLLM | null = null;
+
+stopBtn.addEventListener('click', () => {
+	stopped = true;
+	if (currentAbortController) {
+		currentAbortController.abort();
+		currentAbortController = null;
+	}
+	if (localLLM) {
+		localLLM.dispose();
+		localLLM = null;
+	}
+	stopBtn.style.display = 'none';
+	sendBtn.disabled = false;
+});
+
 async function handleSend(): Promise<void> {
 	const question = userInput.value.trim();
 	if (!question) {
 		return;
 	}
 
-	const cfg = loadConfig();
-	if (!cfg.apiKey || !cfg.model || !cfg.baseURL) {
-		addSystemMessage('【WARN】 请先在菜单「Settings...」中配置 API Key、模型名称和 API 地址');
-		return;
-	}
-
 	userInput.value = '';
 	sendBtn.disabled = true;
+	stopBtn.style.display = '';
+	stopped = false;
+	currentAbortController = new AbortController();
 	addMessage('user', question);
 
 	const statusDiv = document.createElement('div');
@@ -468,59 +536,436 @@ async function handleSend(): Promise<void> {
 	chatMessages.appendChild(statusDiv);
 	chatMessages.scrollTop = chatMessages.scrollHeight;
 
+	try {
+		if (currentMode === 'index') {
+			await handleIndexSearch(question, statusDiv);
+		}
+		else if (currentMode === 'local') {
+			await handleLocalQuery(question, statusDiv);
+		}
+		else {
+			await handleApiQuery(question, statusDiv);
+		}
+	}
+	catch (err: any) {
+		if (err.name !== 'AbortError') {
+			statusDiv.remove();
+			addMessage('system', `【ERROR】 ${err.message || err}`);
+		}
+	}
+	finally {
+		currentAbortController = null;
+		stopBtn.style.display = 'none';
+		sendBtn.disabled = false;
+		userInput.focus();
+	}
+}
+
+/** 索引模式：纯检索 */
+async function handleIndexSearch(question: string, statusDiv: HTMLElement): Promise<void> {
+	const results = await engine.search(question, 10);
+	statusDiv.remove();
+
+	if (results.length === 0) {
+		addMessage('system', '【Info】 未找到匹配的文档片段。请尝试其他关键词或导入更多文档。');
+		return;
+	}
+
+	// 过滤出不包含用户输入关键词的片段
+	const filteredResults = results.filter((result) => {
+		return containsKeyword(result.content, question);
+	});
+
+	if (filteredResults.length === 0) {
+		addMessage('system', '【Info】 未找到包含关键词的匹配片段。请尝试其他关键词。');
+		return;
+	}
+
+	// 创建检索结果容器
+	const resultDiv = document.createElement('div');
+	resultDiv.className = 'message assistant';
+
+	const headerDiv = document.createElement('div');
+	headerDiv.innerHTML = `<strong>找到 ${filteredResults.length} 个匹配片段：</strong>`;
+	resultDiv.appendChild(headerDiv);
+
+	const listDiv = document.createElement('div');
+	listDiv.className = 'search-results';
+
+	for (let i = 0; i < filteredResults.length; i++) {
+		const result = filteredResults[i];
+		// 获取文档标题
+		const title = engine.getDocumentTitle(result.source);
+		const titleHtml = title ? `<span class="search-result-title">${escapeHtml(title)}</span>` : '';
+
+		const itemDiv = document.createElement('div');
+		itemDiv.className = 'search-result-item';
+		itemDiv.innerHTML = `
+			<div class="search-result-header">
+				<div class="search-result-info">
+					${titleHtml}
+					<span class="search-result-source">${escapeHtml(result.source)}</span>
+				</div>
+				<span class="search-result-link">点击预览 →</span>
+			</div>
+			<div class="search-result-content">${highlightText(escapeHtml(result.content), question)}</div>
+		`;
+
+		// 点击打开预览 - 传入source和用户输入的question用于高亮
+		itemDiv.addEventListener('click', () => {
+			openPreviewModal(result.source, question);
+		});
+
+		listDiv.appendChild(itemDiv);
+	}
+
+	resultDiv.appendChild(listDiv);
+	chatMessages.appendChild(resultDiv);
+	chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+/** 检查文本是否包含关键词（不区分大小写） */
+function containsKeyword(text: string, keyword: string): boolean {
+	if (!keyword.trim()) {
+		return true;
+	}
+	const words = keyword.split(/\s+/).filter(w => w.length > 0);
+	if (words.length === 0) {
+		return true;
+	}
+	const lowerText = text.toLowerCase();
+	// 只要包含任意一个关键词就算匹配
+	return words.some(word => lowerText.includes(word.toLowerCase()));
+}
+
+/** API 模式：调用在线 API */
+async function handleApiQuery(question: string, statusDiv: HTMLElement): Promise<void> {
+	const cfg = loadConfig();
+	if (!cfg.apiKey || !cfg.model || !cfg.baseURL) {
+		statusDiv.remove();
+		addMessage('system', '【WARN】 请先在菜单「Settings...」中配置 API Key、模型名称和 API 地址');
+		return;
+	}
+
 	const origOnStatus = engine.onStatus;
 	engine.onStatus = (msg: string) => {
 		statusDiv.textContent = `【Think】 ${msg}`;
 		chatMessages.scrollTop = chatMessages.scrollHeight;
 	};
 
-	try {
-		const msgDiv = document.createElement('div');
-		msgDiv.className = 'message assistant';
+	const msgDiv = document.createElement('div');
+	msgDiv.className = 'message assistant';
 
-		let streamStarted = false;
-		let fullContent = '';
+	let streamStarted = false;
+	let fullContent = '';
 
-		const { sources } = await engine.ask(question, cfg, (chunk) => {
-			if (!streamStarted) {
-				statusDiv.remove();
-				chatMessages.appendChild(msgDiv);
-				streamStarted = true;
-			}
-			fullContent += chunk;
-			msgDiv.innerHTML = renderMarkdown(fullContent);
-			chatMessages.scrollTop = chatMessages.scrollHeight;
-		});
-
+	const { sources } = await engine.ask(question, cfg, (chunk) => {
+		if (stopped)
+			return;
 		if (!streamStarted) {
 			statusDiv.remove();
 			chatMessages.appendChild(msgDiv);
+			streamStarted = true;
 		}
+		fullContent += chunk;
+		msgDiv.innerHTML = renderMarkdown(fullContent);
+		chatMessages.scrollTop = chatMessages.scrollHeight;
+	}, currentAbortController?.signal);
 
-		if (sources.length > 0) {
-			const srcDiv = document.createElement('div');
-			srcDiv.className = 'sources';
-			srcDiv.textContent = `【Docs】 AI生成内容不一定正确，参考来源: ${sources.join(', ')}`;
-			msgDiv.appendChild(srcDiv);
-		}
-	}
-	catch (err: any) {
+	if (!streamStarted) {
 		statusDiv.remove();
-		addMessage('system', `【ERROR】 ${err.message || err}`);
+		chatMessages.appendChild(msgDiv);
 	}
-	finally {
-		engine.onStatus = origOnStatus;
-		sendBtn.disabled = false;
-		userInput.focus();
+
+	if (sources.length > 0) {
+		const srcDiv = document.createElement('div');
+		srcDiv.className = 'sources';
+		srcDiv.textContent = `【Docs】 AI生成内容不一定正确，参考来源: ${sources.join(', ')}`;
+		msgDiv.appendChild(srcDiv);
 	}
+
+	engine.onStatus = origOnStatus;
+}
+
+async function handleLocalQuery(question: string, statusDiv: HTMLElement): Promise<void> {
+	const cfg = loadConfig();
+
+	if (!localLLM) {
+		localLLM = new LocalLLM({
+			onProgress: (msg) => {
+				statusDiv.textContent = `【Model】 ${msg}`;
+				chatMessages.scrollTop = chatMessages.scrollHeight;
+			},
+			modelMirror: cfg.modelMirror,
+			modelName: cfg.localModel,
+			dtype: cfg.localDtype,
+		});
+	}
+
+	statusDiv.textContent = '【Think】 正在推理...';
+
+	const msgDiv = document.createElement('div');
+	msgDiv.className = 'message assistant';
+
+	let streamStarted = false;
+	let fullContent = '';
+
+	const generateFn = (messages: Array<{ role: string; content: string }>, onToken?: (token: string) => void) => {
+		return localLLM!.generate(messages, onToken);
+	};
+
+	const { sources } = await engine.askLocal(question, generateFn, (chunk) => {
+		if (stopped)
+			return;
+		if (!streamStarted) {
+			statusDiv.remove();
+			chatMessages.appendChild(msgDiv);
+			streamStarted = true;
+		}
+		fullContent += chunk;
+		msgDiv.innerHTML = renderMarkdown(fullContent);
+		chatMessages.scrollTop = chatMessages.scrollHeight;
+	}, cfg.historyRounds);
+
+	if (!streamStarted) {
+		statusDiv.remove();
+		chatMessages.appendChild(msgDiv);
+	}
+
+	if (sources.length > 0) {
+		const srcDiv = document.createElement('div');
+		srcDiv.className = 'sources';
+		srcDiv.textContent = `【Docs】 本地AI生成内容仅供参考，参考来源: ${sources.join(', ')}`;
+		msgDiv.appendChild(srcDiv);
+	}
+}
+
+// ============================================================
+// 工具函数
+// ============================================================
+
+/** HTML 转义 */
+function escapeHtml(text: string): string {
+	const div = document.createElement('div');
+	div.textContent = text;
+	return div.innerHTML;
+}
+
+/** 高亮关键词 */
+function highlightText(text: string, keyword: string): string {
+	if (!keyword.trim()) {
+		return text;
+	}
+	// 分词并转义正则特殊字符
+	const words = keyword.split(/\s+/).filter(w => w.length > 0);
+	if (words.length === 0) {
+		return text;
+	}
+
+	let result = text;
+	for (const word of words) {
+		const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		const regex = new RegExp(escaped, 'gi');
+		result = result.replace(regex, '<span class="highlight">$&</span>');
+	}
+	return result;
+}
+
+/** 打开预览弹窗 */
+function openPreviewModal(source: string, highlightKeyword: string): void {
+	previewTitle.textContent = source;
+
+	// 设置在线文档链接
+	const onlineUrl = getSourceOnlineUrl(source);
+	if (onlineUrl) {
+		previewVisit.href = onlineUrl;
+		previewVisit.style.display = 'inline';
+	}
+	else {
+		previewVisit.style.display = 'none';
+	}
+
+	// 获取该来源的完整文档内容
+	const fullContent = engine.getDocumentContent(source);
+	if (!fullContent) {
+		previewBody.innerHTML = '<p style="color: #999;">无法加载文档内容</p>';
+		previewModal.classList.add('show');
+		return;
+	}
+
+	// 先渲染 Markdown（传入 source 用于处理图片链接）
+	let html = renderMarkdown(fullContent, source);
+
+	// 再对渲染后的 HTML 进行高亮处理
+	if (highlightKeyword && highlightKeyword.trim()) {
+		html = highlightInHtml(html, highlightKeyword);
+	}
+
+	previewBody.innerHTML = html;
+	previewModal.classList.add('show');
+
+	// 滚动到第一个高亮位置
+	const firstHighlight = previewBody.querySelector('.highlight');
+	if (firstHighlight) {
+		firstHighlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	}
+}
+
+/**
+ * 内置知识库域名映射配置表
+ * - domain: 对应的在线文档域名（null 表示无在线链接）
+ * - pathPrefix: URL 路径前缀
+ * - pathSuffix: URL 路径后缀
+ */
+interface DomainMapping {
+	domain: string | null;
+	pathPrefix: string;
+	pathSuffix: string;
+}
+
+const DOMAIN_MAPPINGS: Record<string, DomainMapping> = {
+	'design-production': {
+		domain: 'https://wiki.lceda.cn',
+		pathPrefix: '/zh-hans/',
+		pathSuffix: '.html',
+	},
+	'faq-lark': {
+		domain: null,
+		pathPrefix: '',
+		pathSuffix: '',
+	},
+};
+
+const DEFAULT_DOMAIN_MAPPING: DomainMapping = {
+	domain: 'https://prodocs.lceda.cn',
+	pathPrefix: '/cn/',
+	pathSuffix: '/',
+};
+
+function getDomainMapping(dirName: string): DomainMapping {
+	return DOMAIN_MAPPINGS[dirName] || DEFAULT_DOMAIN_MAPPING;
+}
+
+/** 根据知识库路径生成在线文档URL */
+function getSourceOnlineUrl(source: string): string | null {
+	let path = source.replace(/\.md$/, '');
+
+	if (!path.startsWith('内置知识库/')) {
+		return null;
+	}
+
+	path = path.replace(/^内置知识库\//, '');
+
+	const dirName = path.split('/')[0];
+	const mapping = getDomainMapping(dirName);
+
+	if (!mapping.domain) {
+		return null;
+	}
+
+	return `${mapping.domain}${mapping.pathPrefix}${path}${mapping.pathSuffix}`;
+}
+
+/** 在 HTML 内容中进行高亮（保护 HTML 标签） */
+function highlightInHtml(html: string, keyword: string): string {
+	if (!keyword.trim()) {
+		return html;
+	}
+
+	// 分词并过滤空词
+	const words = keyword.split(/\s+/).filter(w => w.length > 0);
+	if (words.length === 0) {
+		return html;
+	}
+
+	// 使用临时占位符保护 HTML 标签
+	const placeholder = '___HTML_TAG___';
+	const tags: string[] = [];
+	let result = html.replace(/<[^>]+>/g, (match) => {
+		tags.push(match);
+		return placeholder;
+	});
+
+	// 在纯文本部分进行高亮
+	for (const word of words) {
+		// 转义正则特殊字符
+		const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		const regex = new RegExp(`(${escaped})`, 'gi');
+		result = result.replace(regex, '<span class="highlight">$1</span>');
+	}
+
+	// 恢复 HTML 标签
+	let tagIndex = 0;
+	result = result.replace(new RegExp(placeholder, 'g'), () => {
+		return tags[tagIndex++] || '';
+	});
+
+	return result;
+}
+
+/** 关闭预览弹窗 */
+function closePreviewModal(): void {
+	previewModal.classList.remove('show');
 }
 
 // ============================================================
 // UI 渲染
 // ============================================================
 /** 渲染 Markdown 内容为 HTML */
-function renderMarkdown(text: string): string {
-	return marked.parse(text, { async: false }) as string;
+function renderMarkdown(text: string, sourcePath?: string): string {
+	// 配置 marked 选项
+	// gfm: 启用 GitHub Flavored Markdown（更好的表格支持）
+	// breaks: 不将单个换行符转换为 <br>
+	// mangle: false - 不转义邮箱地址等
+	// headerIds: false - 不自动添加 header id
+	let html = marked.parse(text, {
+		async: false,
+		gfm: true,
+		breaks: false,
+		mangle: false,
+		headerIds: false,
+	}) as string;
+
+	// 处理图片链接，添加域名前缀
+	if (sourcePath) {
+		const baseUrl = getBaseUrlForSource(sourcePath);
+		if (baseUrl) {
+			// 替换 /storage/images/ 开头的图片链接
+			html = html.replace(
+				/(<img[^>]+src=["'])\/storage\/images\//gi,
+				`$1${baseUrl}/storage/images/`,
+			);
+			// 替换 markdown 图片语法中的相对路径
+			html = html.replace(
+				/(<img[^>]+src=["'])\/cn\//gi,
+				`$1${baseUrl}/cn/`,
+			);
+			html = html.replace(
+				/(<img[^>]+src=["'])\/zh-hans\//gi,
+				`$1${baseUrl}/zh-hans/`,
+			);
+		}
+		// 为跨域图片添加 crossorigin 属性以通过 COEP 校验
+		html = html.replace(
+			/<img(?![^>]*crossorigin)/gi,
+			'<img crossorigin="anonymous"',
+		);
+	}
+
+	return html;
+}
+
+/** 根据文档路径获取对应的基础 URL（用于图片域名补全） */
+function getBaseUrlForSource(source: string): string | null {
+	if (!source.startsWith('内置知识库/')) {
+		return null;
+	}
+
+	const path = source.replace(/^内置知识库\//, '');
+	const dirName = path.split('/')[0];
+	const mapping = getDomainMapping(dirName);
+
+	return mapping.domain;
 }
 
 function addMessage(role: string, content: string, sources?: string[]): void {

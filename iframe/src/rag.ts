@@ -6,6 +6,56 @@ import { LocalEmbeddings } from './embeddings';
 
 declare const eda: any;
 
+const TABLE_ROW_RE = /^\|.+\|$/;
+const TABLE_SEP_RE = /^\|[\s:+-]+\|$/;
+
+function repairTableChunk(chunk: string, fullContent: string): string {
+	const lines = chunk.split('\n');
+	const firstTableLine = lines.findIndex(l => TABLE_ROW_RE.test(l.trim()));
+	if (firstTableLine === -1)
+		return chunk;
+
+	const hasHeader = firstTableLine + 1 < lines.length
+		&& TABLE_SEP_RE.test(lines[firstTableLine + 1].trim());
+	if (hasHeader)
+		return chunk;
+
+	const fullLines = fullContent.split('\n');
+	const chunkFirstRow = lines[firstTableLine].trim();
+	const idx = fullLines.findIndex(l => l.trim() === chunkFirstRow);
+	if (idx <= 0)
+		return chunk;
+
+	let headerStart = idx;
+	for (let i = idx - 1; i >= 0; i--) {
+		const trimmed = fullLines[i].trim();
+		if (TABLE_ROW_RE.test(trimmed) || TABLE_SEP_RE.test(trimmed)) {
+			headerStart = i;
+		}
+		else {
+			break;
+		}
+	}
+
+	if (headerStart >= idx)
+		return chunk;
+
+	let headerEnd = headerStart;
+	for (let i = headerStart; i < idx; i++) {
+		if (TABLE_SEP_RE.test(fullLines[i].trim())) {
+			headerEnd = i;
+			break;
+		}
+	}
+
+	if (headerEnd <= headerStart)
+		return chunk;
+
+	const headerLines = fullLines.slice(headerStart, headerEnd + 1).join('\n');
+	lines.splice(firstTableLine, 0, headerLines);
+	return lines.join('\n');
+}
+
 const SYSTEM_TEMPLATE = `你是一个专业的 AI 助手。请根据以下知识库内容回答用户的问题。
 如果知识库中没有相关信息，请如实告知用户你无法从知识库中找到答案，但可以尝试根据自身知识回答。
 
@@ -22,6 +72,10 @@ export interface RAGConfig {
 	modelMirror?: string;
 	/** API 类型：openai 或 anthropic */
 	apiType?: 'openai' | 'anthropic';
+	/** 启用思考模式（适用于 Qwen3 等） */
+	enableThinking?: boolean;
+	/** 上下文轮数 */
+	historyRounds?: number;
 }
 
 export class RAGEngine {
@@ -35,7 +89,7 @@ export class RAGEngine {
 	private chatHistory: Array<{ role: string; content: string }> = [];
 	public onStatus: ((msg: string) => void) | null = null;
 
-	constructor(onStatus?: (msg: string) => void, modelMirror?: string) {
+	constructor(onStatus?: (msg: string) => void, modelMirror?: string, embeddingModel?: string) {
 		this.onStatus = onStatus ?? null;
 		this.embeddings = new LocalEmbeddings({
 			onProgress: (msg) => {
@@ -44,15 +98,16 @@ export class RAGEngine {
 				}
 			},
 			modelMirror,
+			modelName: embeddingModel,
 		});
 		this.splitter = new RecursiveCharacterTextSplitter({
-			chunkSize: 1000,
-			chunkOverlap: 200,
+			chunkSize: 450,
+			chunkOverlap: 100,
 		});
 	}
 
 	/**
-	 * 加载预构建向量（bge-small，维度一致，直接注入 store）
+	 * 加载预构建向量（bge-large，维度一致，直接注入 store）
 	 */
 	async loadPrebuiltVectors(entries: Array<{ text: string; source: string; vector: number[] }>): Promise<number> {
 		if (entries.length === 0) {
@@ -76,13 +131,18 @@ export class RAGEngine {
 	}
 
 	/**
-	 * 用户上传文档（浏览器端 bge-small 实时向量化）
+	 * 用户上传文档（浏览器端 bge-large 实时向量化）
 	 */
 	async addDocument(name: string, content: string): Promise<number> {
-		const docs = await this.splitter.createDocuments(
+		const rawDocs = await this.splitter.createDocuments(
 			[content],
 			[{ source: name }],
 		);
+
+		const docs = rawDocs.map(d => ({
+			...d,
+			pageContent: repairTableChunk(d.pageContent, content),
+		}));
 
 		// 先计算向量，缓存起来，再注入 store
 		const vectors = await this.embeddings.embedDocuments(
@@ -142,12 +202,83 @@ export class RAGEngine {
 		return this.allDocs.length;
 	}
 
-	async ask(question: string, config: RAGConfig, onChunk?: (text: string) => void): Promise<{ answer: string; sources: string[] }> {
+	/** 纯检索模式：只返回匹配的文档片段，不调用 API */
+	async search(question: string, topK: number = 8): Promise<Array<{ content: string; source: string; score?: number }>> {
+		if (!this.vectorStore || this.allDocs.length === 0) {
+			return [];
+		}
+
+		const relevantDocs = await this.vectorStore.similaritySearch(question, topK);
+		return relevantDocs.map(doc => ({
+			content: doc.pageContent,
+			source: doc.metadata.source,
+		}));
+	}
+
+	/** 获取指定来源的完整文档内容 */
+	getDocumentContent(source: string): string | null {
+		const docs = this.allDocs.filter(doc => doc.metadata.source === source);
+		if (docs.length === 0) {
+			return null;
+		}
+		// 合并同一来源的所有片段
+		return docs.map(doc => doc.pageContent).join('\n\n');
+	}
+
+	/** 获取指定来源的所有片段 */
+	getDocumentChunks(source: string): Array<{ content: string; index: number }> {
+		const docs = this.allDocs.filter(doc => doc.metadata.source === source);
+		return docs.map((doc, idx) => ({
+			content: doc.pageContent,
+			index: idx,
+		}));
+	}
+
+	/** 获取文档的一级标题（从完整内容中提取第一个 # 标题） */
+	getDocumentTitle(source: string): string | null {
+		const content = this.getDocumentContent(source);
+		if (!content) {
+			return null;
+		}
+		// 匹配 Markdown 一级标题
+		// eslint-disable-next-line regexp/no-super-linear-backtracking -- anchored regex on single lines, no ReDoS risk
+		const match = content.match(/^#\s+(.+)$/m);
+		return match ? match[1].trim() : null;
+	}
+
+	async ask(question: string, config: RAGConfig, onChunk?: (text: string) => void, signal?: AbortSignal): Promise<{ answer: string; sources: string[] }> {
+		const { messages, sources } = await this.buildMessages(question, config.historyRounds);
+		const answer = await callAPI(config, messages, onChunk, signal);
+		this.chatHistory.push({ role: 'user', content: question });
+		this.chatHistory.push({ role: 'assistant', content: answer });
+		return { answer, sources };
+	}
+
+	async askLocal(
+		question: string,
+		generateFn: (messages: Array<{ role: string; content: string }>, onToken?: (token: string) => void) => Promise<string>,
+		onChunk?: (text: string) => void,
+		historyRounds?: number,
+	): Promise<{ answer: string; sources: string[] }> {
+		const { messages, sources } = await this.buildMessages(question, historyRounds);
+		const answer = await generateFn(messages, onChunk);
+		this.chatHistory.push({ role: 'user', content: question });
+		this.chatHistory.push({ role: 'assistant', content: answer });
+		return { answer, sources };
+	}
+
+	private async buildMessages(question: string, historyRounds?: number): Promise<{ messages: Array<{ role: string; content: string }>; sources: string[] }> {
 		let context = '';
 		const sources: string[] = [];
 
 		if (this.vectorStore && this.allDocs.length > 0) {
+			if (this.onStatus) {
+				this.onStatus(`正在检索知识库（${this.allDocs.length} 个文档块）...`);
+			}
 			const relevantDocs = await this.vectorStore.similaritySearch(question, 8);
+			if (this.onStatus) {
+				this.onStatus(`检索到 ${relevantDocs.length} 个相关片段`);
+			}
 			if (relevantDocs.length > 0) {
 				context = relevantDocs
 					.map((doc, i) => `[${i + 1}] (来源: ${doc.metadata.source})\n${doc.pageContent}`)
@@ -174,24 +305,22 @@ export class RAGEngine {
 				]);
 
 		const formatted = await prompt.formatMessages({ context, question });
-		const messages = formatted.map(m => ({
+		const msgs = formatted.map(m => ({
 			role: m.getType() === 'human' ? 'user' as const : 'system' as const,
 			content: typeof m.content === 'string' ? m.content : '',
 		}));
 
-		const systemMsg = messages[0];
-		const userMsg = messages[messages.length - 1];
-		const apiMessages = [
+		const systemMsg = msgs[0];
+		const userMsg = msgs[msgs.length - 1];
+		const rounds = historyRounds !== undefined ? historyRounds : 3;
+		const historySlice = rounds > 0 ? this.chatHistory.slice(-(rounds * 2)) : [];
+		const messages = [
 			systemMsg,
-			...this.chatHistory.slice(-6),
+			...historySlice,
 			userMsg,
 		];
 
-		const answer = await callAPI(config, apiMessages, onChunk);
-		this.chatHistory.push({ role: 'user', content: question });
-		this.chatHistory.push({ role: 'assistant', content: answer });
-
-		return { answer, sources };
+		return { messages, sources };
 	}
 }
 
@@ -200,12 +329,13 @@ async function callAPI(
 	config: RAGConfig,
 	messages: Array<{ role: string; content: string }>,
 	onChunk?: (text: string) => void,
+	signal?: AbortSignal,
 ): Promise<string> {
 	const apiType = config.apiType || 'openai';
 	if (apiType === 'anthropic') {
-		return callAnthropicAPI(config, messages, onChunk);
+		return callAnthropicAPI(config, messages, onChunk, signal);
 	}
-	return callOpenAIAPI(config, messages, onChunk);
+	return callOpenAIAPI(config, messages, onChunk, signal);
 }
 
 /** OpenAI 兼容格式 API（包括 MiniMax、DeepSeek 等） */
@@ -213,16 +343,21 @@ async function callOpenAIAPI(
 	config: RAGConfig,
 	messages: Array<{ role: string; content: string }>,
 	onChunk?: (text: string) => void,
+	signal?: AbortSignal,
 ): Promise<string> {
 	const url = `${config.baseURL.replace(/\/$/, '')}/chat/completions`;
 	const useStream = !!onChunk;
-	const body = JSON.stringify({
+	const reqBody: Record<string, any> = {
 		model: config.model,
 		messages,
 		temperature: 0.7,
 		max_tokens: 2048,
 		stream: useStream,
-	});
+	};
+	if (config.enableThinking) {
+		reqBody.chat_template_kwargs = { enable_thinking: true };
+	}
+	const body = JSON.stringify(reqBody);
 
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json',
@@ -234,7 +369,7 @@ async function callOpenAIAPI(
 		response = await eda.sys_ClientUrl.request(url, 'POST', body, { headers });
 	}
 	else {
-		response = await fetch(url, { method: 'POST', headers, body });
+		response = await fetch(url, { method: 'POST', headers, body, signal });
 	}
 
 	if (!response.ok) {
@@ -261,6 +396,10 @@ async function callOpenAIAPI(
 	let buffer = '';
 
 	while (true) {
+		if (signal?.aborted) {
+			reader.cancel();
+			break;
+		}
 		const { done, value } = await reader.read();
 		if (done) {
 			break;
@@ -301,6 +440,7 @@ async function callAnthropicAPI(
 	config: RAGConfig,
 	messages: Array<{ role: string; content: string }>,
 	onChunk?: (text: string) => void,
+	signal?: AbortSignal,
 ): Promise<string> {
 	// Anthropic API 要求 system 消息单独传递
 	const systemMessage = messages.find(m => m.role === 'system')?.content || '';
@@ -327,7 +467,7 @@ async function callAnthropicAPI(
 		response = await eda.sys_ClientUrl.request(url, 'POST', body, { headers });
 	}
 	else {
-		response = await fetch(url, { method: 'POST', headers, body });
+		response = await fetch(url, { method: 'POST', headers, body, signal });
 	}
 
 	if (!response.ok) {
@@ -354,6 +494,10 @@ async function callAnthropicAPI(
 	let buffer = '';
 
 	while (true) {
+		if (signal?.aborted) {
+			reader.cancel();
+			break;
+		}
 		const { done, value } = await reader.read();
 		if (done) {
 			break;
