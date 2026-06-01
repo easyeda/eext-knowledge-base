@@ -6,4 +6,5 @@
 /node_modules/
 /.eslintcache
 debug.log
+/iframe/app.js
 /iframe/src/builtin-vectors.json
