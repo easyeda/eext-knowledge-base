@@ -16,20 +16,20 @@
 			</div>
 			<div id="doc-list"></div>
 			<div id="doc-stats"></div>
-			<button id="clear-kb" class="btn-danger" style="display:none;">清空知识库</button>
+			<button id="clear-kb" class="btn-danger" style="display:none;" data-i18n="Clear Knowledge Base">清空知识库</button>
 		</div>
 		<div id="main">
 			<div id="mode-bar">
-				<span class="mode-label">模式:</span>
-				<button id="mode-api" class="mode-btn active" title="使用在线 AI API 生成回答">🌐 在线AI问答</button>
-				<button id="mode-local" class="mode-btn" title="使用本地AI模型生成回答（无需API Key）">🖥️ 本地AI</button>
-				<button id="mode-index" class="mode-btn" title="仅检索知识库，返回匹配片段">🔍 关键词检索</button>
+				<span class="mode-label" data-i18n="Mode:">模式:</span>
+				<button id="mode-api" class="mode-btn active" title="使用在线 AI API 生成回答" data-i18n-title="Online AI Q&A Tooltip">🌐 在线AI问答</button>
+				<button id="mode-local" class="mode-btn" title="使用本地AI模型生成回答（无需API Key）" data-i18n-title="Local AI Tooltip">🖥️ 本地AI</button>
+				<button id="mode-index" class="mode-btn" title="仅检索知识库，返回匹配片段" data-i18n-title="Keyword Search Tooltip">🔍 关键词检索</button>
 			</div>
 			<div id="chat-messages"></div>
 			<div id="input-area">
-				<textarea id="user-input" placeholder="输入你的问题..." rows="2"></textarea>
-				<button id="send-btn">发送</button>
-				<button id="stop-btn" style="display:none;">停止</button>
+				<textarea id="user-input" placeholder="输入你的问题..." data-i18n-placeholder="Input your question..." rows="2"></textarea>
+				<button id="send-btn" data-i18n="Send">发送</button>
+				<button id="stop-btn" style="display:none;" data-i18n="Stop">停止</button>
 			</div>
 		</div>
 	</div>
@@ -48,25 +48,29 @@
 	</div>
 	<script>
 		var edaObj = (typeof eda !== 'undefined') ? eda : (window.parent && window.parent.eda);
-		function t(tag) {
-			if (edaObj && edaObj.sys_I18n) return edaObj.sys_I18n.text(tag);
-			return tag;
+		var _i18n = {"About":"关于","EasyEDA extension SDK v":"嘉立创EDA 扩展 SDK v${1}","Open AI Assistant":"打开 AI 知识库","Settings...":"设置...","About...":"关于...","AI Knowledge Base Assistant":"AI 知识库助手","Knowledge Base":"知识库","Import Markdown Files":"导入 Markdown 文件","Clear Knowledge Base":"清空知识库","Mode:":"模式:","Online AI Q&A":"在线AI问答","Online AI Q&A Tooltip":"使用在线 AI API 生成回答","Local AI":"本地AI","Local AI Tooltip":"使用本地AI模型生成回答（无需API Key）","Keyword Search":"关键词检索","Keyword Search Tooltip":"仅检索知识库，返回匹配片段","Input your question...":"输入你的问题...","Send":"发送","Stop":"停止","Visit Online Document":"访问在线文档","AI Assistant Settings":"AI 助手设置","API Type":"API 类型","OpenAI Compatible Format":"OpenAI 兼容格式（MiniMax、DeepSeek 等）","Anthropic Format":"Anthropic 格式（Claude 等）","API Key":"API Key","Input API Key":"输入 API Key","Model Name":"模型名称","Input model name":"输入模型名称","API URL":"API 地址","API URL Placeholder":"例如 https://api.openai.com/v1","Advanced Settings":"高级设置","Embedding Model":"Embedding 模型","Embedding Model Hint":"用于文档向量化的模型，留空使用默认 Xenova/bge-large-zh-v1.5","Local AI Model":"本地 AI 模型","Local AI Model Hint":"本地推理模型，留空使用默认 onnx-community/Qwen2.5-0.5B-Instruct","Model Mirror":"模型镜像站","Model Mirror Hint":"用于下载 Embedding 和本地 AI 模型，留空使用默认 https://hf-mirror.com","Enable Thinking Mode":"启用思考模式","Enable Thinking Mode Hint":"开启后在 API 请求中添加 enable_thinking 参数（适用于 Qwen3 等支持思考模式的模型）","Context Rounds":"上下文轮数","Context Rounds Hint":"携带最近 N 轮对话作为上下文，留空默认 3 轮，设为 0 则不携带历史","Save":"保存","Settings Saved":"已保存，重新打开助手窗口生效","Settings Saved Toast":"设置已保存，重新打开助手窗口生效"};
+		function t(tag, ...args) {
+			if (edaObj && edaObj.sys_I18n) return edaObj.sys_I18n.text(tag, undefined, undefined, ...args);
+			var text = _i18n[tag] || tag;
+			for (var i = 0; i < args.length; i++) text = text.replace('${' + (i+1) + '}', args[i]);
+			return text;
 		}
-		// Apply i18n to page elements
+		function applyI18n() {
+			var els = document.querySelectorAll('[data-i18n]');
+			for (var i = 0; i < els.length; i++) { var k = els[i].getAttribute('data-i18n'); els[i].textContent = t(k); }
+			var titles = document.querySelectorAll('[data-i18n-title]');
+			for (var i = 0; i < titles.length; i++) { var k = titles[i].getAttribute('data-i18n-title'); titles[i].title = t(k); }
+			var phs = document.querySelectorAll('[data-i18n-placeholder]');
+			for (var i = 0; i < phs.length; i++) { var k = phs[i].getAttribute('data-i18n-placeholder'); phs[i].placeholder = t(k); }
+		}
+		applyI18n();
+		// Apply i18n to elements with special formatting (emojis, etc.)
 		document.title = t('AI Knowledge Base Assistant');
 		document.querySelector('#sidebar h3').textContent = '📚 ' + t('Knowledge Base');
 		document.querySelector('.upload-btn').textContent = '📄 ' + t('Import Markdown Files');
-		document.getElementById('clear-kb').textContent = t('Clear Knowledge Base');
-		document.querySelector('.mode-label').textContent = t('Mode:');
 		document.getElementById('mode-api').textContent = '🌐 ' + t('Online AI Q&A');
-		document.getElementById('mode-api').title = t('Online AI Q&A Tooltip');
 		document.getElementById('mode-local').textContent = '🖥️ ' + t('Local AI');
-		document.getElementById('mode-local').title = t('Local AI Tooltip');
 		document.getElementById('mode-index').textContent = '🔍 ' + t('Keyword Search');
-		document.getElementById('mode-index').title = t('Keyword Search Tooltip');
-		document.getElementById('user-input').placeholder = t('Input your question...');
-		document.getElementById('send-btn').textContent = t('Send');
-		document.getElementById('stop-btn').textContent = t('Stop');
 		document.getElementById('preview-visit').textContent = '🌐 ' + t('Visit Online Document');
 	</script>
 	<script src="/iframe/app.js"></script>
