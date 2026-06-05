@@ -46,6 +46,29 @@
 			<div id="preview-body" class="modal-body"></div>
 		</div>
 	</div>
+	<script>
+		var edaObj = (typeof eda !== 'undefined') ? eda : (window.parent && window.parent.eda);
+		function t(tag) {
+			if (edaObj && edaObj.sys_I18n) return edaObj.sys_I18n.text(tag);
+			return tag;
+		}
+		// Apply i18n to page elements
+		document.title = t('AI Knowledge Base Assistant');
+		document.querySelector('#sidebar h3').textContent = '📚 ' + t('Knowledge Base');
+		document.querySelector('.upload-btn').textContent = '📄 ' + t('Import Markdown Files');
+		document.getElementById('clear-kb').textContent = t('Clear Knowledge Base');
+		document.querySelector('.mode-label').textContent = t('Mode:');
+		document.getElementById('mode-api').textContent = '🌐 ' + t('Online AI Q&A');
+		document.getElementById('mode-api').title = t('Online AI Q&A Tooltip');
+		document.getElementById('mode-local').textContent = '🖥️ ' + t('Local AI');
+		document.getElementById('mode-local').title = t('Local AI Tooltip');
+		document.getElementById('mode-index').textContent = '🔍 ' + t('Keyword Search');
+		document.getElementById('mode-index').title = t('Keyword Search Tooltip');
+		document.getElementById('user-input').placeholder = t('Input your question...');
+		document.getElementById('send-btn').textContent = t('Send');
+		document.getElementById('stop-btn').textContent = t('Stop');
+		document.getElementById('preview-visit').textContent = '🌐 ' + t('Visit Online Document');
+	</script>
 	<script src="/iframe/app.js"></script>
 </body>
 </html>

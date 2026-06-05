@@ -80,6 +80,39 @@
 	</div>
 	<div id="status"></div>
 	<script>
+		var edaObj = (typeof eda !== 'undefined') ? eda : (window.parent && window.parent.eda);
+		function t(tag) {
+			if (edaObj && edaObj.sys_I18n) return edaObj.sys_I18n.text(tag);
+			return tag;
+		}
+		// Apply i18n to page elements
+		document.title = t('AI Assistant Settings');
+		document.querySelector('h2').textContent = '⚙️ ' + t('AI Assistant Settings');
+		var labels = document.querySelectorAll('.field label');
+		labels[0].textContent = t('API Type');
+		var apiTypeOptions = document.querySelectorAll('#cfg-apitype option');
+		apiTypeOptions[0].textContent = t('OpenAI Compatible Format');
+		apiTypeOptions[1].textContent = t('Anthropic Format');
+		labels[1].textContent = t('API Key');
+		document.getElementById('cfg-apikey').placeholder = t('Input API Key');
+		labels[2].textContent = t('Model Name');
+		document.getElementById('cfg-model').placeholder = t('Input model name');
+		labels[3].textContent = t('API URL');
+		document.getElementById('cfg-baseurl').placeholder = t('API URL Placeholder');
+		document.querySelector('.advanced-section summary').textContent = t('Advanced Settings');
+		var advancedLabels = document.querySelectorAll('.advanced-section .field label');
+		advancedLabels[0].textContent = t('Embedding Model');
+		document.querySelectorAll('.advanced-section .field .hint')[0].textContent = t('Embedding Model Hint');
+		advancedLabels[1].textContent = t('Local AI Model');
+		document.querySelectorAll('.advanced-section .field .hint')[1].textContent = t('Local AI Model Hint');
+		advancedLabels[2].textContent = t('Model Mirror');
+		document.querySelectorAll('.advanced-section .field .hint')[2].textContent = t('Model Mirror Hint');
+		document.querySelector('.checkbox-label').innerHTML = '<input type="checkbox" id="cfg-enable-thinking" /> ' + t('Enable Thinking Mode') + ' ';
+		document.querySelectorAll('.advanced-section .field .hint')[3].textContent = t('Enable Thinking Mode Hint');
+		advancedLabels[3].textContent = t('Context Rounds');
+		document.querySelectorAll('.advanced-section .field .hint')[4].textContent = t('Context Rounds Hint');
+		document.getElementById('save-btn').textContent = '💾 ' + t('Save');
+
 		var STORAGE_KEY = 'ai_assistant_config';
 		var cfgApiType = document.getElementById('cfg-apitype');
 		var cfgApiKey = document.getElementById('cfg-apikey');
@@ -124,10 +157,10 @@
 				historyRounds: cfgHistoryRounds.value.trim() === '' ? undefined : parseInt(cfgHistoryRounds.value, 10),
 			};
 			localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-			statusEl.textContent = '✅ 已保存，重新打开助手窗口生效';
+			statusEl.textContent = '✅ ' + t('Settings Saved');
 			setTimeout(function() { statusEl.textContent = ''; }, 3000);
 			try {
-				eda.sys_Message.showToastMessage('设置已保存，重新打开助手窗口生效',"success", 3);
+				eda.sys_Message.showToastMessage(t('Settings Saved Toast'),"success", 3);
 			} catch(e) {}
 		});
 	</script>
