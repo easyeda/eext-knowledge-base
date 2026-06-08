@@ -437,7 +437,7 @@ function deleteNode(node: DocNode, parentArray: DocNode[]): void {
 			if (!confirmed) {
 				return;
 			}
-			eda.sys_Message.showToastMessage('正在删除，请勿关闭页面或浏览器...', 1, 3);
+			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Deleting, please do not close the page or browser...'), 1, 3);
 			const sourceKeys = collectSourceKeys(node);
 			if (sourceKeys.length > 0) {
 				await engine.removeDocuments(sourceKeys);
@@ -456,7 +456,8 @@ function deleteNode(node: DocNode, parentArray: DocNode[]): void {
 				parentArray.splice(idx, 1);
 			}
 			renderDocList();
-			eda.sys_Message.showToastMessage(`已删除文件夹「${node.name}」`, 0, 3);
+			// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder syntax
+			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Deleted folder "${1}"', undefined, undefined, node.name), 0, 3);
 		},
 	);
 }
@@ -472,7 +473,7 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 			if (!confirmed) {
 				return;
 			}
-			eda.sys_Message.showToastMessage('正在删除，请勿关闭页面或浏览器...', 1, 3);
+			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Deleting, please do not close the page or browser...'), 1, 3);
 			const sourceKey = getSourceKey(node.path, file);
 			await engine.removeDocuments([sourceKey]);
 			// 标记为已删除（用于内置知识库）或从用户文档中移除
@@ -491,7 +492,8 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 				}
 			}
 			renderDocList();
-			eda.sys_Message.showToastMessage(`已删除「${file}」`, 0, 3);
+			// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder syntax
+			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Deleted "${1}"', undefined, undefined, file), 0, 3);
 		},
 	);
 }
@@ -1092,7 +1094,7 @@ function handleClearKB(): void {
 			renderDocList();
 			chatMessages.innerHTML = '';
 			addSystemMessage('知识库已清空。');
-			eda.sys_Message.showToastMessage('知识库已清空', 0, 3);
+			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Knowledge base cleared'), 0, 3);
 		},
 	);
 }

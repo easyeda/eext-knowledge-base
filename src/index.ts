@@ -10,7 +10,7 @@ export function activate(status?: 'onStartupFinished', arg?: string): void {}
 export async function openAIAssistant(): Promise<void> {
 	try {
 		await eda.sys_IFrame.openIFrame('/iframe/index.html', 700, 600, 'ai-assistant', {
-			title: 'AI 知识库助手',
+			title: eda.sys_I18n.text('AI Knowledge Base Assistant'),
 			maximizeButton: true,
 			minimizeButton: true,
 		});
@@ -23,7 +23,7 @@ export async function openAIAssistant(): Promise<void> {
 export async function openAISettings(): Promise<void> {
 	try {
 		await eda.sys_IFrame.openIFrame('/iframe/settings.html', 420, 490, 'ai-settings', {
-			title: '设置',
+			title: eda.sys_I18n.text('Settings'),
 		});
 	}
 	catch (err) {

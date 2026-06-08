@@ -42,5 +42,9 @@
 	"Context Rounds Hint": "Carry the last N rounds of conversation as context, leave empty for default 3 rounds, set to 0 to carry no history",
 	"Save": "Save",
 	"Settings Saved": "Settings saved, reopen the assistant window to take effect",
-	"Settings Saved Toast": "Settings saved, reopen the assistant window to take effect"
+	"Settings Saved Toast": "Settings saved, reopen the assistant window to take effect",
+	"Deleting, please do not close the page or browser...": "Deleting, please do not close the page or browser...",
+	"Deleted folder \"${1}\"": "Deleted folder \"${1}\"",
+	"Deleted \"${1}\"": "Deleted \"${1}\"",
+	"Knowledge base cleared": "Knowledge base cleared"
 }

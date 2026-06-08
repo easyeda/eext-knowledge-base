@@ -42,5 +42,9 @@
 	"Context Rounds Hint": "携带最近 N 轮对话作为上下文，留空默认 3 轮，设为 0 则不携带历史",
 	"Save": "保存",
 	"Settings Saved": "已保存，重新打开助手窗口生效",
-	"Settings Saved Toast": "设置已保存，重新打开助手窗口生效"
+	"Settings Saved Toast": "设置已保存，重新打开助手窗口生效",
+	"Deleting, please do not close the page or browser...": "正在删除，请勿关闭页面或浏览器...",
+	"Deleted folder \"${1}\"": "已删除文件夹「${1}」",
+	"Deleted \"${1}\"": "已删除「${1}」",
+	"Knowledge base cleared": "知识库已清空"
 }

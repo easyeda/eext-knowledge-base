@@ -129,7 +129,7 @@ async function main() {
 	for (let i = 0; i < chunks.length; i += batchSize) {
 		const batch = chunks.slice(i, i + batchSize);
 		const texts = batch.map(c => c.text);
-		const output = await extractor(texts, { pooling: 'mean', normalize: true, truncation: true } as any);
+		const output = await extractor(texts, { pooling: 'mean', normalize: true, truncation: true, max_length: 512 } as any);
 
 		for (let j = 0; j < batch.length; j++) {
 			const vec = (output as any)[j];
