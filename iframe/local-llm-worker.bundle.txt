@@ -33218,7 +33218,7 @@ var _a70;
 env2.backends.onnx.wasm.numThreads = numCores;
 var generator = null;
 var aborted = false;
-self.onmessage = async (e) => {
+globalThis.onmessage = async (e) => {
   const { type, payload } = e.data;
   if (type === "abort") {
     aborted = true;
@@ -33232,33 +33232,33 @@ self.onmessage = async (e) => {
       env2.allowRemoteModels = true;
       env2.remoteHost = payload.modelMirror || "https://hf-mirror.com";
       env2.remotePathTemplate = "{model}/resolve/{revision}/";
-      self.postMessage({ type: "progress", message: "\u6B63\u5728\u52A0\u8F7D\u672C\u5730 AI \u6A21\u578B..." });
+      globalThis.postMessage({ type: "progress", message: "\u6B63\u5728\u52A0\u8F7D\u672C\u5730 AI \u6A21\u578B..." });
       generator = await pipeline2("text-generation", modelName, {
         dtype,
         progress_callback: (p) => {
           if (p.status === "ready") {
-            self.postMessage({ type: "progress", message: "\u672C\u5730 AI \u6A21\u578B\u52A0\u8F7D\u5B8C\u6210" });
+            globalThis.postMessage({ type: "progress", message: "\u672C\u5730 AI \u6A21\u578B\u52A0\u8F7D\u5B8C\u6210" });
           } else if (p.status === "initiate") {
-            self.postMessage({ type: "progress", message: `\u6B63\u5728\u521D\u59CB\u5316: ${p.file || "..."}` });
+            globalThis.postMessage({ type: "progress", message: `\u6B63\u5728\u521D\u59CB\u5316: ${p.file || "..."}` });
           } else if (p.status === "progress") {
             const loaded = p.loaded || 0;
             const total = p.total || 0;
             const file = (p.file || "").replace(/^onnx-community\//, "");
             if (total > 0) {
               const percent = Math.round(loaded / total * 100);
-              self.postMessage({ type: "progress", message: `\u4E0B\u8F7D ${file}: ${percent}%` });
+              globalThis.postMessage({ type: "progress", message: `\u4E0B\u8F7D ${file}: ${percent}%` });
             }
           }
         }
       });
-      self.postMessage({ type: "progress", message: "\u672C\u5730 AI \u6A21\u578B\u5C31\u7EEA" });
-      self.postMessage({ type: "init_done" });
+      globalThis.postMessage({ type: "progress", message: "\u672C\u5730 AI \u6A21\u578B\u5C31\u7EEA" });
+      globalThis.postMessage({ type: "init_done" });
     } catch (err) {
-      self.postMessage({ type: "error", message: err.message || String(err) });
+      globalThis.postMessage({ type: "error", message: err.message || String(err) });
     }
   } else if (type === "generate") {
     if (!generator) {
-      self.postMessage({ type: "error", message: "\u6A21\u578B\u672A\u52A0\u8F7D" });
+      globalThis.postMessage({ type: "error", message: "\u6A21\u578B\u672A\u52A0\u8F7D" });
       return;
     }
     aborted = false;
@@ -33266,8 +33266,9 @@ self.onmessage = async (e) => {
       const streamer = new TextStreamer(generator.tokenizer, {
         skip_prompt: true,
         callback_function: (text) => {
-          if (aborted) return false;
-          self.postMessage({ type: "token", text });
+          if (aborted)
+            return false;
+          globalThis.postMessage({ type: "token", text });
         }
       });
       await generator(payload.messages, {
@@ -33277,15 +33278,15 @@ self.onmessage = async (e) => {
         streamer
       });
       if (aborted) {
-        self.postMessage({ type: "generate_done" });
+        globalThis.postMessage({ type: "generate_done" });
       } else {
-        self.postMessage({ type: "generate_done" });
+        globalThis.postMessage({ type: "generate_done" });
       }
     } catch (err) {
       if (!aborted) {
-        self.postMessage({ type: "error", message: err.message || String(err) });
+        globalThis.postMessage({ type: "error", message: err.message || String(err) });
       } else {
-        self.postMessage({ type: "generate_done" });
+        globalThis.postMessage({ type: "generate_done" });
       }
     }
   }

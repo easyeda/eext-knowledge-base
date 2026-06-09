@@ -7,7 +7,6 @@ import { Buffer } from 'node:buffer';
  */
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pipeline } from '@huggingface/transformers';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 
 const DOCS_DIR = join(__dirname, 'docs');
@@ -119,24 +118,74 @@ async function main() {
 
 	// 3. 生成向量
 	console.warn(' 加载 Embedding 模型...');
-	const extractor = await pipeline('feature-extraction', MODEL_NAME, {
-		dtype: 'q8',
-	});
+	const { AutoTokenizer, AutoModel } = await import('@huggingface/transformers');
+	const tokenizer = await AutoTokenizer.from_pretrained(MODEL_NAME);
+	const model = await AutoModel.from_pretrained(MODEL_NAME, { dtype: 'q8' });
 
 	const entries: VectorEntry[] = [];
 	const batchSize = 8;
+	const MAX_LENGTH = 512;
+
+	function meanPooling(lastHiddenState: any, attentionMask: any): Float32Array {
+		const [batchSize_, seqLen, hiddenSize] = lastHiddenState.dims;
+		const result = new Float32Array(batchSize_ * hiddenSize);
+		const maskData = attentionMask.data;
+		const hsData = lastHiddenState.data;
+
+		for (let b = 0; b < batchSize_; b++) {
+			let sumMask = 0;
+			for (let s = 0; s < seqLen; s++) {
+				const mask = Number(maskData[b * seqLen + s]);
+				sumMask += mask;
+				for (let h = 0; h < hiddenSize; h++) {
+					result[b * hiddenSize + h] += hsData[b * seqLen * hiddenSize + s * hiddenSize + h] * mask;
+				}
+			}
+			for (let h = 0; h < hiddenSize; h++) {
+				result[b * hiddenSize + h] /= Math.max(sumMask, 1e-9);
+			}
+		}
+		return result;
+	}
+
+	function normalizeVectors(vectors: Float32Array, count: number, dim: number): Float32Array {
+		for (let i = 0; i < count; i++) {
+			let norm = 0;
+			for (let d = 0; d < dim; d++) {
+				norm += vectors[i * dim + d] * vectors[i * dim + d];
+			}
+			norm = Math.sqrt(norm);
+			for (let d = 0; d < dim; d++) {
+				vectors[i * dim + d] /= Math.max(norm, 1e-9);
+			}
+		}
+		return vectors;
+	}
 
 	for (let i = 0; i < chunks.length; i += batchSize) {
 		const batch = chunks.slice(i, i + batchSize);
 		const texts = batch.map(c => c.text);
-		const output = await extractor(texts, { pooling: 'mean', normalize: true, truncation: true, max_length: 512 } as any);
+
+		// 手动分词 + 截断，确保不超过模型最大长度
+		const tokenized = await tokenizer(texts, {
+			truncation: true,
+			max_length: MAX_LENGTH,
+			padding: true,
+		});
+
+		const output = await model(tokenized);
+		const hiddenState = output.last_hidden_state;
+		const attentionMask = tokenized.attention_mask;
+		const [b, _s, h] = hiddenState.dims;
+
+		let pooled = meanPooling(hiddenState, attentionMask);
+		pooled = normalizeVectors(pooled, b, h);
 
 		for (let j = 0; j < batch.length; j++) {
-			const vec = (output as any)[j];
 			entries.push({
 				text: batch[j].text,
 				source: batch[j].source,
-				vector: Array.from(vec.data),
+				vector: Array.from(pooled.slice(j * h, (j + 1) * h)),
 			});
 		}
 
