@@ -33,7 +33,7 @@ export async function openAISettings(): Promise<void> {
 
 export function about(): void {
 	eda.sys_Dialog.showInformationMessage(
-		'AI 知识库助手 v1.1.0\n\n导入 Markdown 文档，构建知识库，智能问答。\n。',
-		'关于 AI 助手',
+		eda.sys_I18n.text('AI Knowledge Base Assistant v1.1.0\n\nImport Markdown documents, build knowledge base, and ask questions intelligently.\n'),
+		eda.sys_I18n.text('About AI Assistant'),
 	);
 }

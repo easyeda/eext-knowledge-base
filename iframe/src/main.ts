@@ -192,18 +192,18 @@ function setMode(mode: SearchMode): void {
 	modeLocalBtn.classList.toggle('active', mode === 'local');
 	modeIndexBtn.classList.toggle('active', mode === 'index');
 	userInput.placeholder = mode === 'api'
-		? '输入你的问题...'
+		? eda.sys_I18n.text('Input your question...')
 		: mode === 'local'
-			? '输入你的问题（本地AI推理）...'
-			: '输入关键词检索知识库...';
+			? eda.sys_I18n.text('Input your question (local AI)...')
+			: eda.sys_I18n.text('Input keywords to search knowledge base...');
 }
 
 // ============================================================
 // 初始化
 // ============================================================
-addSystemMessage('欢迎使用 AI 知识库助手！');
+addSystemMessage(eda.sys_I18n.text('Welcome to AI Knowledge Base Assistant'));
 if (!config.apiKey || !config.model || !config.baseURL) {
-	addSystemMessage('【WARN】 请在菜单「Settings...」中配置 API Key、模型名称和 API 地址。');
+	addSystemMessage(eda.sys_I18n.text('Please configure API Key, model name and API URL in the Settings menu'));
 }
 
 // 先加载用户文档（已在内存中），再加载内置知识库
@@ -257,21 +257,22 @@ async function loadBuiltinDocs(): Promise<void> {
 			for (const v of filteredVectors) {
 				const parts = v.source.split('/');
 				const file = parts.pop()!;
-				const folderSegments = parts.length > 0 ? parts : ['内置知识库'];
+				const folderSegments = parts.length > 0 ? parts : [eda.sys_I18n.text('Built-in Knowledge Base')];
 				const folder = ensureFolder(rootNodes, '', folderSegments);
 				if (!folder.files.includes(file)) {
 					folder.files.push(file);
 				}
 			}
-			addSystemMessage(`【Model】 已加载内置知识库（${count} 个文档块）。可继续导入更多文档。`);
+			// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+			addSystemMessage(eda.sys_I18n.text('Loaded built-in knowledge base (${1} chunks). You can import more documents.', undefined, undefined, String(count)));
 		}
 		else {
-			addSystemMessage('【Model】 内置知识库已清空。可导入文档构建自定义知识库。');
+			addSystemMessage(eda.sys_I18n.text('Built-in knowledge base is empty. Import documents to build a custom knowledge base.'));
 		}
 		renderDocList();
 	}
 	catch {
-		addSystemMessage('【WARN】 内置知识库加载失败');
+		addSystemMessage(eda.sys_I18n.text('Failed to load built-in knowledge base'));
 	}
 }
 
@@ -310,7 +311,8 @@ async function loadUserDocuments(): Promise<void> {
 				}
 			}
 			catch {
-				addSystemMessage(`【WARN】 加载用户文档失败: ${file}`);
+				// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+				addSystemMessage(eda.sys_I18n.text('Failed to load user document: ${1}', undefined, undefined, file));
 			}
 		}
 	}
@@ -357,7 +359,8 @@ async function handleFileUpload(e: Event): Promise<void> {
 	saveKBState(kbState);
 
 	renderDocList();
-	addSystemMessage(`已导入 ${files.length} 个文件到「${folderName}」，共 ${totalChunks} 个文档块。`);
+	// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+	addSystemMessage(eda.sys_I18n.text('Imported ${1} files to "${2}", total ${3} chunks.', undefined, undefined, String(files.length), folderName, String(totalChunks)));
 	fileInput.value = '';
 }
 
@@ -429,10 +432,11 @@ function updateNodePaths(node: DocNode, newPath: string): void {
 function deleteNode(node: DocNode, parentArray: DocNode[]): void {
 	const fileCount = countFiles(node);
 	eda.sys_Dialog.showConfirmationMessage(
-		`确定删除文件夹「${node.name}」及其 ${fileCount} 个文件？`,
-		'确认删除',
-		'删除',
-		'取消',
+		// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+		eda.sys_I18n.text('Delete folder "${1}" and its ${2} files?', undefined, undefined, node.name, String(fileCount)),
+		eda.sys_I18n.text('Confirm Delete'),
+		eda.sys_I18n.text('Delete'),
+		eda.sys_I18n.text('Cancel'),
 		async (confirmed: boolean) => {
 			if (!confirmed) {
 				return;
@@ -465,10 +469,11 @@ function deleteNode(node: DocNode, parentArray: DocNode[]): void {
 function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode[]): void {
 	const file = node.files[fileIdx];
 	eda.sys_Dialog.showConfirmationMessage(
-		`确定删除「${file}」？`,
-		'确认删除',
-		'删除',
-		'取消',
+		// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+		eda.sys_I18n.text('Delete "${1}"?', undefined, undefined, file),
+		eda.sys_I18n.text('Confirm Delete'),
+		eda.sys_I18n.text('Delete'),
+		eda.sys_I18n.text('Cancel'),
 		async (confirmed: boolean) => {
 			if (!confirmed) {
 				return;
@@ -534,7 +539,7 @@ async function handleSend(): Promise<void> {
 
 	const statusDiv = document.createElement('div');
 	statusDiv.className = 'message system';
-	statusDiv.textContent = '【Search】 检索知识库...';
+	statusDiv.textContent = eda.sys_I18n.text('Searching knowledge base...');
 	chatMessages.appendChild(statusDiv);
 	chatMessages.scrollTop = chatMessages.scrollHeight;
 
@@ -569,7 +574,7 @@ async function handleIndexSearch(question: string, statusDiv: HTMLElement): Prom
 	statusDiv.remove();
 
 	if (results.length === 0) {
-		addMessage('system', '【Info】 未找到匹配的文档片段。请尝试其他关键词或导入更多文档。');
+		addMessage('system', eda.sys_I18n.text('No matching document fragments found. Try other keywords or import more documents.'));
 		return;
 	}
 
@@ -579,7 +584,7 @@ async function handleIndexSearch(question: string, statusDiv: HTMLElement): Prom
 	});
 
 	if (filteredResults.length === 0) {
-		addMessage('system', '【Info】 未找到包含关键词的匹配片段。请尝试其他关键词。');
+		addMessage('system', eda.sys_I18n.text('No matching fragments containing keywords found. Try other keywords.'));
 		return;
 	}
 
@@ -645,7 +650,7 @@ async function handleApiQuery(question: string, statusDiv: HTMLElement): Promise
 	const cfg = loadConfig();
 	if (!cfg.apiKey || !cfg.model || !cfg.baseURL) {
 		statusDiv.remove();
-		addMessage('system', '【WARN】 请先在菜单「Settings...」中配置 API Key、模型名称和 API 地址');
+		addMessage('system', eda.sys_I18n.text('Please configure API Key, model name and API URL in the Settings menu first'));
 		return;
 	}
 
@@ -704,7 +709,7 @@ async function handleLocalQuery(question: string, statusDiv: HTMLElement): Promi
 		});
 	}
 
-	statusDiv.textContent = '【Think】 正在推理...';
+	statusDiv.textContent = eda.sys_I18n.text('Thinking...');
 
 	const msgDiv = document.createElement('div');
 	msgDiv.className = 'message assistant';
@@ -790,7 +795,7 @@ function openPreviewModal(source: string, highlightKeyword: string): void {
 	// 获取该来源的完整文档内容
 	const fullContent = engine.getDocumentContent(source);
 	if (!fullContent) {
-		previewBody.innerHTML = '<p style="color: #999;">无法加载文档内容</p>';
+		previewBody.innerHTML = `<p style="color: #999;">${eda.sys_I18n.text('Unable to load document content')}</p>`;
 		previewModal.classList.add('show');
 		return;
 	}
@@ -852,11 +857,11 @@ function getDomainMapping(dirName: string): DomainMapping {
 function getSourceOnlineUrl(source: string): string | null {
 	let path = source.replace(/\.md$/, '');
 
-	if (!path.startsWith('内置知识库/')) {
+	if (!path.startsWith(`${eda.sys_I18n.text('Built-in Knowledge Base')}/`)) {
 		return null;
 	}
 
-	path = path.replace(/^内置知识库\//, '');
+	path = path.replace(new RegExp(`^${eda.sys_I18n.text('Built-in Knowledge Base').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`), '');
 
 	const dirName = path.split('/')[0];
 	const mapping = getDomainMapping(dirName);
@@ -959,11 +964,11 @@ function renderMarkdown(text: string, sourcePath?: string): string {
 
 /** 根据文档路径获取对应的基础 URL（用于图片域名补全） */
 function getBaseUrlForSource(source: string): string | null {
-	if (!source.startsWith('内置知识库/')) {
+	if (!source.startsWith(`${eda.sys_I18n.text('Built-in Knowledge Base')}/`)) {
 		return null;
 	}
 
-	const path = source.replace(/^内置知识库\//, '');
+	const path = source.replace(new RegExp(`^${eda.sys_I18n.text('Built-in Knowledge Base').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`), '');
 	const dirName = path.split('/')[0];
 	const mapping = getDomainMapping(dirName);
 
@@ -1071,16 +1076,17 @@ function renderDocList(): void {
 
 	// 统计
 	const totalFiles = countAllFiles();
-	docStats.textContent = `${totalFiles} 个文档, ${engine.documentCount} 个文档块`;
+	// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+	docStats.textContent = eda.sys_I18n.text('${1} documents, ${2} chunks', undefined, undefined, String(totalFiles), String(engine.documentCount));
 	clearKbBtn.style.display = rootNodes.length > 0 ? 'block' : 'none';
 }
 
 function handleClearKB(): void {
 	eda.sys_Dialog.showConfirmationMessage(
-		'确定清空所有知识库？此操作不可恢复。',
-		'确认清空',
-		'清空',
-		'取消',
+		eda.sys_I18n.text('Clear all knowledge base? This action cannot be undone.'),
+		eda.sys_I18n.text('Confirm Clear'),
+		eda.sys_I18n.text('Clear'),
+		eda.sys_I18n.text('Cancel'),
 		(confirmed: boolean) => {
 			if (!confirmed) {
 				return;
@@ -1093,7 +1099,7 @@ function handleClearKB(): void {
 			saveKBState(kbState);
 			renderDocList();
 			chatMessages.innerHTML = '';
-			addSystemMessage('知识库已清空。');
+			addSystemMessage(eda.sys_I18n.text('Knowledge base has been cleared.'));
 			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Knowledge base cleared'), 0, 3);
 		},
 	);

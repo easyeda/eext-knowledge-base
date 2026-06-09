@@ -31,16 +31,16 @@ globalThis.onmessage = async (e: MessageEvent) => {
 			env.remoteHost = payload.modelMirror || 'https://hf-mirror.com';
 			env.remotePathTemplate = '{model}/resolve/{revision}/';
 
-			globalThis.postMessage({ type: 'progress', message: '正在加载本地 AI 模型...' });
+			globalThis.postMessage({ type: 'progress', message: 'Loading local AI model...' });
 
 			generator = await pipeline('text-generation', modelName, {
 				dtype: dtype as any,
 				progress_callback: (p: any) => {
 					if (p.status === 'ready') {
-						globalThis.postMessage({ type: 'progress', message: '本地 AI 模型加载完成' });
+						globalThis.postMessage({ type: 'progress', message: 'Local AI model loaded' });
 					}
 					else if (p.status === 'initiate') {
-						globalThis.postMessage({ type: 'progress', message: `正在初始化: ${p.file || '...'}` });
+						globalThis.postMessage({ type: 'progress', message: `Initializing: ${p.file || '...'}` });
 					}
 					else if (p.status === 'progress') {
 						const loaded = p.loaded || 0;
@@ -48,13 +48,13 @@ globalThis.onmessage = async (e: MessageEvent) => {
 						const file = (p.file || '').replace(/^onnx-community\//, '');
 						if (total > 0) {
 							const percent = Math.round((loaded / total) * 100);
-							globalThis.postMessage({ type: 'progress', message: `下载 ${file}: ${percent}%` });
+							globalThis.postMessage({ type: 'progress', message: `Downloading ${file}: ${percent}%` });
 						}
 					}
 				},
 			}) as TextGenerationPipeline;
 
-			globalThis.postMessage({ type: 'progress', message: '本地 AI 模型就绪' });
+			globalThis.postMessage({ type: 'progress', message: 'Local AI model ready' });
 			globalThis.postMessage({ type: 'init_done' });
 		}
 		catch (err: any) {
@@ -63,7 +63,7 @@ globalThis.onmessage = async (e: MessageEvent) => {
 	}
 	else if (type === 'generate') {
 		if (!generator) {
-			globalThis.postMessage({ type: 'error', message: '模型未加载' });
+			globalThis.postMessage({ type: 'error', message: 'Model not loaded' });
 			return;
 		}
 

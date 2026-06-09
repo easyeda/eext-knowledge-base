@@ -36,7 +36,7 @@ export class LocalEmbeddings extends Embeddings {
 		}
 
 		if (this.onProgress) {
-			this.onProgress('正在加载内置 Embedding 模型...');
+			this.onProgress(eda.sys_I18n.text('Loading built-in Embedding model...'));
 		}
 
 		this.loading = pipeline('feature-extraction', this.modelName, {
@@ -46,10 +46,11 @@ export class LocalEmbeddings extends Embeddings {
 					return;
 				}
 				if (p.status === 'ready') {
-					this.onProgress('Embedding 模型加载完成');
+					this.onProgress(eda.sys_I18n.text('Embedding model loaded'));
 				}
 				else if (p.status === 'initiate') {
-					this.onProgress(`正在初始化模型: ${p.file || '...'}`);
+					// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+					this.onProgress(eda.sys_I18n.text('Initializing model: ${1}', undefined, undefined, p.file || '...'));
 				}
 				else if (p.status === 'progress') {
 					const loaded = p.loaded || 0;
@@ -57,14 +58,15 @@ export class LocalEmbeddings extends Embeddings {
 					const file = (p.file || '').replace(/^Xenova\//, '');
 					if (total > 0) {
 						const percent = Math.round((loaded / total) * 100);
-						this.onProgress(`下载 ${file}: ${percent}%`);
+						// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+						this.onProgress(eda.sys_I18n.text('Downloading ${1}: ${2}%', undefined, undefined, file, String(percent)));
 					}
 				}
 			},
 		}).then((ext) => {
 			this.extractor = ext;
 			if (this.onProgress) {
-				this.onProgress('Embedding 模型就绪');
+				this.onProgress(eda.sys_I18n.text('Embedding model ready'));
 			}
 			return ext;
 		});

@@ -56,13 +56,13 @@ function repairTableChunk(chunk: string, fullContent: string): string {
 	return lines.join('\n');
 }
 
-const SYSTEM_TEMPLATE = `你是一个专业的 AI 助手。请根据以下知识库内容回答用户的问题。
-如果知识库中没有相关信息，请如实告知用户你无法从知识库中找到答案，但可以尝试根据自身知识回答。
+const SYSTEM_TEMPLATE = `You are a professional AI assistant. Please answer the user's question based on the following knowledge base content.
+If the knowledge base does not contain relevant information, honestly inform the user that you cannot find the answer in the knowledge base, but you can try to answer based on your own knowledge.
 
-知识库内容：
+Knowledge base content:
 {context}`;
 
-const EMPTY_SYSTEM_TEMPLATE = '你是一个专业的 AI 助手。当前知识库为空，请根据自身知识回答用户的问题，并提醒用户可以导入 Markdown 文档来构建知识库。';
+const EMPTY_SYSTEM_TEMPLATE = 'You are a professional AI assistant. The knowledge base is currently empty. Please answer the user\'s question based on your own knowledge, and remind the user that they can import Markdown documents to build a knowledge base.';
 
 export interface RAGConfig {
 	apiKey: string;
@@ -273,7 +273,7 @@ export class RAGEngine {
 
 		if (this.vectorStore && this.allDocs.length > 0) {
 			if (this.onStatus) {
-				this.onStatus(`正在检索知识库（${this.allDocs.length} 个文档块）...`);
+				this.onStatus(`Searching knowledge base (${this.allDocs.length} chunks)...`);
 			}
 			const relevantDocs = await this.vectorStore.similaritySearch(question, 8);
 			if (this.onStatus) {
@@ -299,7 +299,7 @@ export class RAGEngine {
 				])
 			: ChatPromptTemplate.fromMessages([
 					['system', hasKB
-						? '你是一个专业的 AI 助手。知识库中未找到与用户问题直接相关的内容，请根据自身知识回答。'
+						? 'You are a professional AI assistant. No directly relevant content was found in the knowledge base for the user\'s question. Please answer based on your own knowledge.'
 						: EMPTY_SYSTEM_TEMPLATE],
 					['human', '{question}'],
 				]);
@@ -374,13 +374,13 @@ async function callOpenAIAPI(
 
 	if (!response.ok) {
 		const errText = await response.text();
-		throw new Error(`API 错误 (${response.status}): ${errText}`);
+		throw new Error(`API error (${response.status}): ${errText}`);
 	}
 
 	if (!useStream) {
 		const data = await response.json();
 		if (!data.choices || !data.choices.length) {
-			throw new Error('API 返回数据异常');
+			throw new Error('API returned abnormal data');
 		}
 		return data.choices[0].message.content;
 	}
@@ -388,7 +388,7 @@ async function callOpenAIAPI(
 	// 流式读取
 	const reader = response.body?.getReader();
 	if (!reader) {
-		throw new Error('流式响应不可用');
+		throw new Error('Streaming response not available');
 	}
 
 	const decoder = new TextDecoder();
@@ -472,13 +472,13 @@ async function callAnthropicAPI(
 
 	if (!response.ok) {
 		const errText = await response.text();
-		throw new Error(`API 错误 (${response.status}): ${errText}`);
+		throw new Error(`API error (${response.status}): ${errText}`);
 	}
 
 	if (!useStream) {
 		const data = await response.json();
 		if (!data.content || !data.content.length) {
-			throw new Error('API 返回数据异常');
+			throw new Error('API returned abnormal data');
 		}
 		return data.content[0].text;
 	}
@@ -486,7 +486,7 @@ async function callAnthropicAPI(
 	// 流式读取
 	const reader = response.body?.getReader();
 	if (!reader) {
-		throw new Error('流式响应不可用');
+		throw new Error('Streaming response not available');
 	}
 
 	const decoder = new TextDecoder();
