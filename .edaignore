@@ -1,4 +1,5 @@
 /.git/
+/.github/
 /.history/
 /.husky/
 /.kiro/
@@ -11,6 +12,10 @@
 /src/
 /iframe/src/
 /iframe/build.ts
+/iframe/docs/
+/iframe/prebuild-vectors.ts
+/iframe/local-llm-worker.js
+/locales/extensionJson/
 /.editorconfig
 /.gitattributes
 /.gitignore

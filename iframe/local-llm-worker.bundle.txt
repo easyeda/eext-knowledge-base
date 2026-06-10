@@ -33232,33 +33232,33 @@ globalThis.onmessage = async (e) => {
       env2.allowRemoteModels = true;
       env2.remoteHost = payload.modelMirror || "https://hf-mirror.com";
       env2.remotePathTemplate = "{model}/resolve/{revision}/";
-      globalThis.postMessage({ type: "progress", message: "\u6B63\u5728\u52A0\u8F7D\u672C\u5730 AI \u6A21\u578B..." });
+      globalThis.postMessage({ type: "progress", message: "Loading local AI model..." });
       generator = await pipeline2("text-generation", modelName, {
         dtype,
         progress_callback: (p) => {
           if (p.status === "ready") {
-            globalThis.postMessage({ type: "progress", message: "\u672C\u5730 AI \u6A21\u578B\u52A0\u8F7D\u5B8C\u6210" });
+            globalThis.postMessage({ type: "progress", message: "Local AI model loaded" });
           } else if (p.status === "initiate") {
-            globalThis.postMessage({ type: "progress", message: `\u6B63\u5728\u521D\u59CB\u5316: ${p.file || "..."}` });
+            globalThis.postMessage({ type: "progress", message: `Initializing: ${p.file || "..."}` });
           } else if (p.status === "progress") {
             const loaded = p.loaded || 0;
             const total = p.total || 0;
             const file = (p.file || "").replace(/^onnx-community\//, "");
             if (total > 0) {
               const percent = Math.round(loaded / total * 100);
-              globalThis.postMessage({ type: "progress", message: `\u4E0B\u8F7D ${file}: ${percent}%` });
+              globalThis.postMessage({ type: "progress", message: `Downloading ${file}: ${percent}%` });
             }
           }
         }
       });
-      globalThis.postMessage({ type: "progress", message: "\u672C\u5730 AI \u6A21\u578B\u5C31\u7EEA" });
+      globalThis.postMessage({ type: "progress", message: "Local AI model ready" });
       globalThis.postMessage({ type: "init_done" });
     } catch (err) {
       globalThis.postMessage({ type: "error", message: err.message || String(err) });
     }
   } else if (type === "generate") {
     if (!generator) {
-      globalThis.postMessage({ type: "error", message: "\u6A21\u578B\u672A\u52A0\u8F7D" });
+      globalThis.postMessage({ type: "error", message: "Model not loaded" });
       return;
     }
     aborted = false;
