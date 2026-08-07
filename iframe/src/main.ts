@@ -174,6 +174,7 @@ const stopBtn = document.getElementById('stop-btn') as HTMLButtonElement;
 const modeApiBtn = document.getElementById('mode-api') as HTMLButtonElement;
 const modeLocalBtn = document.getElementById('mode-local') as HTMLButtonElement;
 const modeIndexBtn = document.getElementById('mode-index') as HTMLButtonElement;
+const rebuildIndexBtn = document.getElementById('rebuild-index') as HTMLButtonElement;
 const previewModal = document.getElementById('preview-modal')!;
 const previewTitle = document.getElementById('preview-title')!;
 const previewBody = document.getElementById('preview-body')!;
@@ -191,11 +192,57 @@ function setMode(mode: SearchMode): void {
 	modeApiBtn.classList.toggle('active', mode === 'api');
 	modeLocalBtn.classList.toggle('active', mode === 'local');
 	modeIndexBtn.classList.toggle('active', mode === 'index');
+	rebuildIndexBtn.style.display = mode === 'index' ? 'inline-block' : 'none';
 	userInput.placeholder = mode === 'api'
 		? eda.sys_I18n.text('Input your question...')
 		: mode === 'local'
 			? eda.sys_I18n.text('Input your question (local AI)...')
 			: eda.sys_I18n.text('Input keywords to search knowledge base...');
+
+	// 首次切到关键词检索模式时，弹窗提示需要创建索引
+	if (mode === 'index') {
+		showIndexBuildDialogIfNeeded();
+	}
+}
+
+/** 记录是否已弹窗提示过（本次会话内只提示一次） */
+let indexDialogShown = false;
+
+function showIndexBuildDialogIfNeeded(): void {
+	if (indexDialogShown) {
+		return;
+	}
+	indexDialogShown = true;
+
+	eda.sys_Dialog.showConfirmationMessage(
+		eda.sys_I18n.text('Keyword search uses a local index. First use or after document changes, the index needs to be created, which may take a moment. Build index now?'),
+		eda.sys_I18n.text('Build Search Index'),
+		eda.sys_I18n.text('Build'),
+		eda.sys_I18n.text('Cancel'),
+		(confirmed: boolean) => {
+			if (confirmed) {
+				rebuildSearchIndex();
+			}
+		},
+	);
+}
+
+/** 重建搜索索引 */
+function rebuildSearchIndex(): void {
+	if (engine.documentCount === 0) {
+		addSystemMessage(eda.sys_I18n.text('Knowledge base is empty, nothing to index.'));
+		return;
+	}
+	eda.sys_Message.showToastMessage(eda.sys_I18n.text('Building index, please wait...'), 1, 3);
+	// 用 setTimeout 让 UI 先更新
+	setTimeout(() => {
+		const start = Date.now();
+		engine.buildSearchIndex();
+		const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+		// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+		addSystemMessage(eda.sys_I18n.text('Search index built (${1} chunks, ${2}s).', undefined, undefined, String(engine.documentCount), elapsed));
+		eda.sys_Message.showToastMessage(eda.sys_I18n.text('Index built'), 0, 2);
+	}, 50);
 }
 
 // ============================================================
@@ -224,6 +271,19 @@ userInput.addEventListener('keydown', (e) => {
 modeApiBtn.addEventListener('click', () => setMode('api'));
 modeLocalBtn.addEventListener('click', () => setMode('local'));
 modeIndexBtn.addEventListener('click', () => setMode('index'));
+rebuildIndexBtn.addEventListener('click', () => {
+	eda.sys_Dialog.showConfirmationMessage(
+		eda.sys_I18n.text('Rebuild search index? This may take a moment.'),
+		eda.sys_I18n.text('Rebuild Search Index'),
+		eda.sys_I18n.text('Rebuild'),
+		eda.sys_I18n.text('Cancel'),
+		(confirmed: boolean) => {
+			if (confirmed) {
+				rebuildSearchIndex();
+			}
+		},
+	);
+});
 
 // 预览弹窗关闭事件
 previewClose.addEventListener('click', closePreviewModal);
@@ -568,23 +628,18 @@ async function handleSend(): Promise<void> {
 	}
 }
 
-/** 索引模式：纯检索 */
+/** 索引模式：使用本地倒排索引检索 */
 async function handleIndexSearch(question: string, statusDiv: HTMLElement): Promise<void> {
-	const results = await engine.search(question, 10);
+	// 如果索引过期（文档有增删），先提示
+	if (engine.isIndexStale) {
+		statusDiv.textContent = eda.sys_I18n.text('Building index, please wait...');
+	}
+
+	const results = engine.keywordSearch(question, 10);
 	statusDiv.remove();
 
 	if (results.length === 0) {
 		addMessage('system', eda.sys_I18n.text('No matching document fragments found. Try other keywords or import more documents.'));
-		return;
-	}
-
-	// 过滤出不包含用户输入关键词的片段
-	const filteredResults = results.filter((result) => {
-		return containsKeyword(result.content, question);
-	});
-
-	if (filteredResults.length === 0) {
-		addMessage('system', eda.sys_I18n.text('No matching fragments containing keywords found. Try other keywords.'));
 		return;
 	}
 
@@ -593,14 +648,15 @@ async function handleIndexSearch(question: string, statusDiv: HTMLElement): Prom
 	resultDiv.className = 'message assistant';
 
 	const headerDiv = document.createElement('div');
-	headerDiv.innerHTML = `<strong>找到 ${filteredResults.length} 个匹配片段：</strong>`;
+	// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+	headerDiv.innerHTML = `<strong>${eda.sys_I18n.text('Found ${1} matching fragments', undefined, undefined, String(results.length))}</strong>`;
 	resultDiv.appendChild(headerDiv);
 
 	const listDiv = document.createElement('div');
 	listDiv.className = 'search-results';
 
-	for (let i = 0; i < filteredResults.length; i++) {
-		const result = filteredResults[i];
+	for (let i = 0; i < results.length; i++) {
+		const result = results[i];
 		// 获取文档标题
 		const title = engine.getDocumentTitle(result.source);
 		const titleHtml = title ? `<span class="search-result-title">${escapeHtml(title)}</span>` : '';
@@ -613,7 +669,8 @@ async function handleIndexSearch(question: string, statusDiv: HTMLElement): Prom
 					${titleHtml}
 					<span class="search-result-source">${escapeHtml(result.source)}</span>
 				</div>
-				<span class="search-result-link">点击预览 →</span>
+				<span class="search-result-score">score: ${result.score.toFixed(3)}</span>
+				<span class="search-result-link">${eda.sys_I18n.text('Click to preview')} -></span>
 			</div>
 			<div class="search-result-content">${highlightText(escapeHtml(result.content), question)}</div>
 		`;
@@ -629,20 +686,6 @@ async function handleIndexSearch(question: string, statusDiv: HTMLElement): Prom
 	resultDiv.appendChild(listDiv);
 	chatMessages.appendChild(resultDiv);
 	chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-/** 检查文本是否包含关键词（不区分大小写） */
-function containsKeyword(text: string, keyword: string): boolean {
-	if (!keyword.trim()) {
-		return true;
-	}
-	const words = keyword.split(/\s+/).filter(w => w.length > 0);
-	if (words.length === 0) {
-		return true;
-	}
-	const lowerText = text.toLowerCase();
-	// 只要包含任意一个关键词就算匹配
-	return words.some(word => lowerText.includes(word.toLowerCase()));
 }
 
 /** API 模式：调用在线 API */

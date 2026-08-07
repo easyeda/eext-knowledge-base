@@ -3,6 +3,7 @@ import { MemoryVectorStore } from '@langchain/classic/vectorstores/memory';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { LocalEmbeddings } from './embeddings';
+import { SearchIndex } from './search-index';
 
 declare const eda: any;
 
@@ -87,6 +88,12 @@ export class RAGEngine {
 	private allVectors: number[][] = [];
 	private prebuiltCount = 0;
 	private chatHistory: Array<{ role: string; content: string }> = [];
+	/** 本地关键词搜索索引 */
+	private searchIndex: SearchIndex = new SearchIndex();
+	/** 知识库版本号，文档增删时递增，用于判断索引是否过期 */
+	private docVersion = 0;
+	/** 索引构建时的版本号，docVersion > indexVersion 表示索引过期 */
+	private indexVersion = -1;
 	public onStatus: ((msg: string) => void) | null = null;
 
 	constructor(onStatus?: (msg: string) => void, modelMirror?: string, embeddingModel?: string) {
@@ -122,6 +129,7 @@ export class RAGEngine {
 		this.allDocs.push(...docs);
 		this.allVectors.push(...vectors);
 		this.prebuiltCount = entries.length;
+		this.docVersion++;
 
 		if (!this.vectorStore) {
 			this.vectorStore = new MemoryVectorStore(this.embeddings);
@@ -151,6 +159,7 @@ export class RAGEngine {
 
 		this.allDocs.push(...docs);
 		this.allVectors.push(...vectors);
+		this.docVersion++;
 
 		if (!this.vectorStore) {
 			this.vectorStore = new MemoryVectorStore(this.embeddings);
@@ -175,6 +184,7 @@ export class RAGEngine {
 		}
 		this.allDocs = filteredDocs;
 		this.allVectors = filteredVectors;
+		this.docVersion++;
 
 		// 用已有向量直接重建 store，无需重新 embedding
 		this.vectorStore = new MemoryVectorStore(this.embeddings);
@@ -196,6 +206,8 @@ export class RAGEngine {
 		this.allVectors = [];
 		this.vectorStore = null;
 		this.chatHistory = [];
+		this.searchIndex.clear();
+		this.docVersion++;
 	}
 
 	get documentCount(): number {
@@ -213,6 +225,35 @@ export class RAGEngine {
 			content: doc.pageContent,
 			source: doc.metadata.source,
 		}));
+	}
+
+	/** 索引是否过期（需要重建） */
+	get isIndexStale(): boolean {
+		return this.indexVersion < this.docVersion;
+	}
+
+	/** 构建本地搜索索引（从 allDocs 全量构建） */
+	buildSearchIndex(): void {
+		const documents = this.allDocs.map(doc => ({
+			content: doc.pageContent,
+			source: doc.metadata.source,
+		}));
+		this.searchIndex.build(documents);
+		this.indexVersion = this.docVersion;
+	}
+
+	/**
+	 * 本地关键词搜索（TF-IDF 倒排索引）
+	 * 如果索引过期会自动重建
+	 */
+	keywordSearch(query: string, topK: number = 10): Array<{ content: string; source: string; score: number }> {
+		if (this.allDocs.length === 0) {
+			return [];
+		}
+		if (this.isIndexStale) {
+			this.buildSearchIndex();
+		}
+		return this.searchIndex.search(query, topK);
 	}
 
 	/** 获取指定来源的完整文档内容 */

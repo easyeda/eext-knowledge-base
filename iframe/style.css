@@ -294,6 +294,17 @@ body {
 	border-color: #4a90d9;
 }
 
+.rebuild-btn {
+	background: #fff3cd;
+	border-color: #f0d878;
+	color: #856404;
+	font-size: 11px;
+}
+.rebuild-btn:hover {
+	background: #ffeaa7;
+	border-color: #e0c060;
+}
+
 /* 检索结果样式 */
 .search-results {
 	display: flex;
@@ -320,6 +331,8 @@ body {
 	align-items: center;
 	justify-content: space-between;
 	margin-bottom: 6px;
+	gap: 8px;
+	flex-wrap: wrap;
 }
 
 .search-result-info {

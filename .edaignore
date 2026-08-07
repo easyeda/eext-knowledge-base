@@ -15,7 +15,6 @@
 /iframe/docs/
 /iframe/prebuild-vectors.ts
 /iframe/local-llm-worker.js
-/locales/extensionJson/
 /.editorconfig
 /.gitattributes
 /.gitignore

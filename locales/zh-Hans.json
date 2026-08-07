@@ -79,5 +79,19 @@
 	"Embedding model loaded": "Embedding 模型加载完成",
 	"Initializing model: ${1}": "正在初始化模型: ${1}",
 	"Downloading ${1}: ${2}%": "下载 ${1}: ${2}%",
-	"Embedding model ready": "Embedding 模型就绪"
+	"Embedding model ready": "Embedding 模型就绪",
+	"Keyword search uses a local index. First use or after document changes, the index needs to be created, which may take a moment. Build index now?": "关键词检索使用本地索引。首次使用或文档变更后需要创建索引，可能需要一点时间。是否立即构建索引？",
+	"Build Search Index": "构建搜索索引",
+	"Build": "构建",
+	"Rebuild search index? This may take a moment.": "确定重建搜索索引？可能需要一点时间。",
+	"Rebuild Search Index": "重建搜索索引",
+	"Rebuild": "重建",
+	"Rebuild Index": "重建索引",
+	"Rebuild Index Tooltip": "重建本地搜索索引",
+	"Building index, please wait...": "正在构建索引，请稍候...",
+	"Search index built (${1} chunks, ${2}s).": "搜索索引已构建（${1} 个文档块，${2} 秒）。",
+	"Index built": "索引已构建",
+	"Knowledge base is empty, nothing to index.": "知识库为空，无需构建索引。",
+	"Found ${1} matching fragments": "找到 ${1} 个匹配片段",
+	"Click to preview": "点击预览"
 }
