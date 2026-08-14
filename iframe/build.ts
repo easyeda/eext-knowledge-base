@@ -15,6 +15,21 @@ esbuild.buildSync({
 	},
 });
 
+// 3. Build the standalone settings model manager.
+esbuild.buildSync({
+	entryPoints: ['iframe/src/model-manager.ts'],
+	bundle: true,
+	outfile: 'iframe/model-manager.js',
+	format: 'iife',
+	platform: 'browser',
+	target: 'es2020',
+	minify: false,
+	sourcemap: false,
+	define: {
+		'process.env.NODE_ENV': '"production"',
+	},
+});
+
 // 2. Build main app (imports worker bundle as text)
 esbuild.buildSync({
 	entryPoints: ['iframe/src/main.ts'],

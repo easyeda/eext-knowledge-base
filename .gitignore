@@ -7,4 +7,5 @@
 /.eslintcache
 debug.log
 /iframe/app.js
+/iframe/model-manager.js
 /iframe/src/builtin-vectors.json

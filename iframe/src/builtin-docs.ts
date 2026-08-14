@@ -15,3 +15,4 @@ export interface VectorEntry {
 }
 
 export const builtinVectors: VectorEntry[] = builtinVectorsJson;
+export { PREBUILT_VECTOR_DTYPE, PREBUILT_VECTOR_MODEL_NAME } from './prebuilt-vector-info';

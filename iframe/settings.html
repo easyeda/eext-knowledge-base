@@ -11,7 +11,8 @@
 		.field label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
 		.field input, .field select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; outline: none; background: #fff; }
 		.field input:focus, .field select:focus { border-color: #4a90d9; }
-		.field .hint { font-size: 11px; color: #999; margin-top: 2px; }
+		.hint { font-size: 10px; line-height: 1.35; color: #999; }
+		.field .hint { margin-top: 2px; }
 		.actions { margin-top: 16px; display: flex; gap: 8px; }
 		.btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
 		.btn-primary { background: #4a90d9; color: #fff; }
@@ -20,8 +21,38 @@
 		.advanced-section { margin-top: 12px; border: 1px solid #ddd; border-radius: 4px; padding: 8px 12px; background: #fafafa; }
 		.advanced-section summary { font-size: 13px; color: #555; cursor: pointer; padding: 4px 0; }
 		.advanced-section .field { margin-top: 10px; }
-		.checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #333; cursor: pointer; }
-		.checkbox-label input[type="checkbox"] { width: auto; margin: 0; }
+		.checkbox-label { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #334155; cursor: pointer; user-select: none; }
+		.checkbox-label input[type="checkbox"] { position: relative; width: 34px; height: 18px; margin: 0; flex: 0 0 auto; appearance: none; border: 1px solid #cbd5e1; border-radius: 999px; background: linear-gradient(180deg, #f8fafc, #e2e8f0); outline: none; transition: background .18s ease, border-color .18s ease, box-shadow .18s ease; }
+		.checkbox-label input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .25); transition: transform .18s ease; }
+		.checkbox-label input[type="checkbox"]:checked { border-color: #2f7dc1; background: linear-gradient(180deg, #4a90d9, #2f7dc1); box-shadow: 0 0 0 2px rgba(74, 144, 217, .12); }
+		.checkbox-label input[type="checkbox"]:checked::after { transform: translateX(16px); }
+		.checkbox-label input[type="checkbox"]:focus-visible { box-shadow: 0 0 0 3px rgba(74, 144, 217, .22); }
+		.model-repository { margin-top: 14px; border-top: 1px solid #ddd; padding-top: 14px; }
+		.model-repository h3 { font-size: 14px; color: #333; }
+		.model-repository-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+		.model-switches { margin: 8px 0 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 7px; border: 1px solid #e6edf5; border-radius: 6px; background: #fff; }
+		.prebuilt-vector-info { display: inline-block; margin-top: 2px; color: #6b7d92; font-family: Consolas, 'SFMono-Regular', monospace; }
+		.usage-guide { margin: 8px 0 10px; border: 1px solid #e6edf5; border-radius: 6px; background: #fbfdff; }
+		.usage-guide summary { padding: 7px 10px; font-size: 12px; color: #24517d; cursor: pointer; user-select: none; }
+		.usage-guide-content { padding: 0 10px 9px; font-size: 10px; line-height: 1.5; color: #64748b; }
+		.usage-guide-content ol { margin-left: 16px; }
+		.usage-guide-content li { margin-top: 3px; }
+		.model-import { display: grid; grid-template-columns: 130px 1fr auto; gap: 8px; align-items: center; }
+		.model-import input { min-width: 0; font-size: 12px; }
+		.model-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+		.model-list.empty { font-size: 12px; color: #999; }
+		.model-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; background: #fff; border: 1px solid #e2e2e2; border-radius: 4px; }
+		.model-info { display: flex; flex-direction: column; min-width: 0; }
+		.model-info strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.model-info span { font-size: 10px; color: #888; margin-top: 2px; }
+		.model-row > div:last-child { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+		.model-dtype { width: 120px; padding: 5px 6px; font-size: 11px; border: 1px solid #ddd; border-radius: 4px; background: #fff; }
+		.vector-actions { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+		.btn-secondary { background: #f1f5f9; color: #24517d; border: 1px solid #d8e2ef; }
+		.btn-small { padding: 5px 8px; background: #e7eef7; color: #24517d; }
+		.btn-danger { color: #a32b2b; background: #f9e8e8; margin-left: 4px; }
+		#model-status { margin-top: 8px; min-height: 16px; font-size: 11px; color: #287a44; overflow-wrap: anywhere; }
+		#model-status.error { color: #b32727; }
 	</style>
 </head>
 <body>
@@ -75,13 +106,57 @@
 			<div class="hint" data-i18n="Context Rounds Hint">携带最近 N 轮对话作为上下文，留空默认 3 轮，设为 0 则不携带历史</div>
 		</div>
 	</details>
+	<section class="model-repository">
+		<div class="model-repository-header">
+			<h3 data-i18n="Local Model Repository">本地模型仓库</h3>
+			<label class="checkbox-label">
+				<input type="checkbox" id="cfg-local-imported-enabled" />
+				<span data-i18n="Enable imported local models">启用导入本地模型</span>
+			</label>
+		</div>
+		<div class="hint" data-i18n="Enable Imported Local Models Hint">关闭时使用镜像站在线拉取的模型；开启后才使用下方选中的导入模型。</div>
+		<div class="model-switches">
+			<label class="checkbox-label">
+				<input type="checkbox" id="cfg-use-prebuilt-vectors" />
+				<span data-i18n="Use prebuilt vectors">使用预构建向量</span>
+			</label>
+			<div class="hint"><span data-i18n="Use Prebuilt Vectors Hint">开启后内置文档直接使用随包向量；查询和新导入文档使用当前启用的 Embedding 模型。建议与下方编译时模型和量化等级保持兼容。</span><br /><span id="prebuilt-vector-info" class="prebuilt-vector-info"></span></div>
+		</div>
+		<details class="usage-guide">
+			<summary data-i18n="Local Model Usage Guide">使用说明</summary>
+			<div class="usage-guide-content">
+				<ol>
+					<li data-i18n="Local Model Usage Step 1">默认保持“启用导入本地模型”关闭，助手会从镜像站在线拉取模型。</li>
+					<li data-i18n="Local Model Usage Step 2">需要离线模型时，先选择 Chat 或 Embedding 类型，再导入完整的 Transformers.js ONNX 模型文件夹。</li>
+					<li data-i18n="Local Model Usage Step 3">导入后点击模型行的 Use 只会选中模型；开启“启用导入本地模型”后才真正生效。</li>
+					<li data-i18n="Local Model Usage Step 4">开启“使用预构建向量”时，内置文档保持使用随包向量；当前启用的 Embedding 模型用于查询和新导入文档。</li>
+					<li data-i18n="Local Model Usage Step 5">只有关闭预构建向量，并希望用当前导入的 Embedding 模型重构内置文档时，才需要点击 Rebuild vectors。</li>
+				</ol>
+			</div>
+		</details>
+		<div class="model-import">
+			<select id="model-kind">
+				<option value="text-generation" data-i18n="Chat model">对话模型</option>
+				<option value="feature-extraction" data-i18n="Embedding model">Embedding 模型</option>
+			</select>
+			<input type="file" id="model-folder" webkitdirectory multiple />
+			<button type="button" class="btn btn-primary" id="import-model-btn" data-i18n="Import folder">导入文件夹</button>
+		</div>
+		<div class="hint" data-i18n="Local Model Import Hint">请选择完整的 Transformers.js 兼容 ONNX 模型文件夹。导入后的模型会保存在本地，并在离线模式下加载。</div>
+		<div class="vector-actions">
+			<button type="button" class="btn btn-secondary" id="rebuild-vectors-btn" data-i18n="Rebuild vectors">重构向量</button>
+			<span class="hint" data-i18n="Rebuild Vectors Hint">切换启用的 Embedding 模型或 ONNX 精度后使用。</span>
+		</div>
+		<div id="model-status"></div>
+		<div id="model-list" class="model-list"></div>
+	</section>
 	<div class="actions">
 		<button class="btn btn-primary" id="save-btn" data-i18n="Save">💾 保存</button>
 	</div>
 	<div id="status"></div>
 	<script>
-		var edaObj = (typeof eda !== 'undefined') ? eda : (window.parent && window.parent.eda);
-		var _i18n = {"About":"关于","EasyEDA extension SDK v":"嘉立创EDA 扩展 SDK v${1}","Open AI Assistant":"打开 AI 知识库","Settings...":"设置...","About...":"关于...","AI Knowledge Base Assistant":"AI 知识库助手","Knowledge Base":"知识库","Import Markdown Files":"导入 Markdown 文件","Clear Knowledge Base":"清空知识库","Mode:":"模式:","Online AI Q&A":"在线AI问答","Online AI Q&A Tooltip":"使用在线 AI API 生成回答","Local AI":"本地AI","Local AI Tooltip":"使用本地AI模型生成回答（无需API Key）","Keyword Search":"关键词检索","Keyword Search Tooltip":"仅检索知识库，返回匹配片段","Input your question...":"输入你的问题...","Send":"发送","Stop":"停止","Visit Online Document":"访问在线文档","AI Assistant Settings":"AI 助手设置","API Type":"API 类型","OpenAI Compatible Format":"OpenAI 兼容格式（MiniMax、DeepSeek 等）","Anthropic Format":"Anthropic 格式（Claude 等）","API Key":"API Key","Input API Key":"输入 API Key","Model Name":"模型名称","Input model name":"输入模型名称","API URL":"API 地址","API URL Placeholder":"例如 https://api.openai.com/v1","Advanced Settings":"高级设置","Embedding Model":"Embedding 模型","Embedding Model Hint":"用于文档向量化的模型，留空使用默认 Xenova/bge-large-zh-v1.5","Local AI Model":"本地 AI 模型","Local AI Model Hint":"本地推理模型，留空使用默认 onnx-community/Qwen2.5-0.5B-Instruct","Model Mirror":"模型镜像站","Model Mirror Hint":"用于下载 Embedding 和本地 AI 模型，留空使用默认 https://hf-mirror.com","Enable Thinking Mode":"启用思考模式","Enable Thinking Mode Hint":"开启后在 API 请求中添加 enable_thinking 参数（适用于 Qwen3 等支持思考模式的模型）","Context Rounds":"上下文轮数","Context Rounds Hint":"携带最近 N 轮对话作为上下文，留空默认 3 轮，设为 0 则不携带历史","Save":"保存","Settings Saved":"已保存，重新打开助手窗口生效","Settings Saved Toast":"设置已保存，重新打开助手窗口生效","Keyword search uses a local index. First use or after document changes, the index needs to be created, which may take a moment. Build index now?":"关键词检索使用本地索引。首次使用或文档变更后需要创建索引，可能需要一点时间。是否立即构建索引？","Build Search Index":"构建搜索索引","Build":"构建","Rebuild search index? This may take a moment.":"确定重建搜索索引？可能需要一点时间。","Rebuild Search Index":"重建搜索索引","Rebuild":"重建","Rebuild Index":"重建索引","Rebuild Index Tooltip":"重建本地搜索索引","Building index, please wait...":"正在构建索引，请稍候...","Search index built (${1} chunks, ${2}s).":"搜索索引已构建（${1} 个文档块，${2} 秒）。","Index built":"索引已构建","Knowledge base is empty, nothing to index.":"知识库为空，无需构建索引。","Found ${1} matching fragments":"找到 ${1} 个匹配片段","Click to preview":"点击预览"};
+		var edaObj = (typeof eda !== 'undefined') ? eda : null;
+		var _i18n = {"About":"关于","EasyEDA extension SDK v":"嘉立创EDA 扩展 SDK v${1}","Open AI Assistant":"打开 AI 知识库","Settings...":"设置...","About...":"关于...","AI Knowledge Base Assistant":"AI 知识库助手","Knowledge Base":"知识库","Import Markdown Files":"导入 Markdown 文件","Clear Knowledge Base":"清空知识库","Mode:":"模式:","Online AI Q&A":"在线AI问答","Online AI Q&A Tooltip":"使用在线 AI API 生成回答","Local AI":"本地AI","Local AI Tooltip":"使用本地AI模型生成回答（无需API Key）","Keyword Search":"关键词检索","Keyword Search Tooltip":"仅检索知识库，返回匹配片段","Input your question...":"输入你的问题...","Send":"发送","Stop":"停止","Visit Online Document":"访问在线文档","AI Assistant Settings":"AI 助手设置","API Type":"API 类型","OpenAI Compatible Format":"OpenAI 兼容格式（MiniMax、DeepSeek 等）","Anthropic Format":"Anthropic 格式（Claude 等）","API Key":"API Key","Input API Key":"输入 API Key","Model Name":"模型名称","Input model name":"输入模型名称","API URL":"API 地址","API URL Placeholder":"例如 https://api.openai.com/v1","Advanced Settings":"高级设置","Embedding Model":"Embedding 模型","Embedding Model Hint":"用于文档向量化的模型，留空使用默认 Xenova/bge-large-zh-v1.5","Local AI Model":"本地 AI 模型","Local AI Model Hint":"本地推理模型，留空使用默认 onnx-community/Qwen2.5-0.5B-Instruct","Model Mirror":"模型镜像站","Model Mirror Hint":"用于下载 Embedding 和本地 AI 模型，留空使用默认 https://hf-mirror.com","Enable Thinking Mode":"启用思考模式","Enable Thinking Mode Hint":"开启后在 API 请求中添加 enable_thinking 参数（适用于 Qwen3 等支持思考模式的模型）","Context Rounds":"上下文轮数","Context Rounds Hint":"携带最近 N 轮对话作为上下文，留空默认 3 轮，设为 0 则不携带历史","Save":"保存","Settings Saved":"已保存，重新打开助手窗口生效","Settings Saved Toast":"设置已保存，重新打开助手窗口生效","Deleting, please do not close the page or browser...":"正在删除，请勿关闭页面或浏览器...","Deleted folder \"${1}\"":"已删除文件夹「${1}」","Deleted \"${1}\"":"已删除「${1}」","Knowledge base cleared":"知识库已清空","Welcome to AI Knowledge Base Assistant":"欢迎使用 AI 知识库助手！","Please configure API Key, model name and API URL in the Settings menu":"【WARN】 请在菜单「Settings...」中配置 API Key、模型名称和 API 地址。","Loaded built-in knowledge base (${1} chunks). You can import more documents.":"【Model】 已加载内置知识库（${1} 个文档块）。可继续导入更多文档。","Built-in knowledge base is empty. Import documents to build a custom knowledge base.":"【Model】 内置知识库已清空。可导入文档构建自定义知识库。","Loading built-in Embedding model...":"正在加载内置 Embedding 模型...","AI Knowledge Base Assistant v1.1.0\n\nImport Markdown documents, build knowledge base, and ask questions intelligently.\n":"AI 知识库助手 v1.1.0\n\n导入 Markdown 文档，构建知识库，智能问答。\n","About AI Assistant":"关于 AI 助手","Input your question (local AI)...":"输入你的问题（本地AI推理）...","Input keywords to search knowledge base...":"输入关键词检索知识库...","Built-in Knowledge Base":"内置知识库","Failed to load built-in knowledge base":"【WARN】 内置知识库加载失败","Failed to load user document: ${1}":"【WARN】 加载用户文档失败: ${1}","Imported ${1} files to \"${2}\", total ${3} chunks.":"已导入 ${1} 个文件到「${2}」，共 ${3} 个文档块。","Delete folder \"${1}\" and its ${2} files?":"确定删除文件夹「${1}」及其 ${2} 个文件？","Confirm Delete":"确认删除","Delete":"删除","Cancel":"取消","Delete \"${1}\"?":"确定删除「${1}」？","Searching knowledge base...":"【Search】 检索知识库...","No matching document fragments found. Try other keywords or import more documents.":"【Info】 未找到匹配的文档片段。请尝试其他关键词或导入更多文档。","No matching fragments containing keywords found. Try other keywords.":"【Info】 未找到包含关键词的匹配片段。请尝试其他关键词。","Please configure API Key, model name and API URL in the Settings menu first":"【WARN】 请先在菜单「Settings...」中配置 API Key、模型名称和 API 地址","Thinking...":"【Think】 正在推理...","Unable to load document content":"无法加载文档内容","Clear all knowledge base? This action cannot be undone.":"确定清空所有知识库？此操作不可恢复。","Confirm Clear":"确认清空","Clear":"清空","Knowledge base has been cleared.":"知识库已清空。","${1} documents, ${2} chunks":"${1} 个文档, ${2} 个文档块","Embedding model loaded":"Embedding 模型加载完成","Initializing model: ${1}":"正在初始化模型: ${1}","Downloading ${1}: ${2}%":"下载 ${1}: ${2}%","Embedding model ready":"Embedding 模型就绪","Keyword search uses a local index. First use or after document changes, the index needs to be created, which may take a moment. Build index now?":"关键词检索使用本地索引。首次使用或文档变更后需要创建索引，可能需要一点时间。是否立即构建索引？","Build Search Index":"构建搜索索引","Build":"构建","Rebuild search index? This may take a moment.":"确定重建搜索索引？可能需要一点时间。","Rebuild Search Index":"重建搜索索引","Rebuild":"重建","Rebuild Index":"重建索引","Rebuild Index Tooltip":"重建本地搜索索引","Building index, please wait...":"正在构建索引，请稍候...","Search index built (${1} chunks, ${2}s).":"搜索索引已构建（${1} 个文档块，${2} 秒）。","Index built":"索引已构建","Knowledge base is empty, nothing to index.":"知识库为空，无需构建索引。","Found ${1} matching fragments":"找到 ${1} 个匹配片段","Click to preview":"点击预览","Settings":"设置","Local Model Repository":"本地模型仓库","Chat model":"对话模型","Embedding model":"Embedding 模型","Import folder":"导入文件夹","Local Model Import Hint":"请选择完整的 Transformers.js 兼容 ONNX 模型文件夹。导入后的模型会保存在本地，并在离线模式下加载。","Rebuild vectors":"重构向量","Rebuild Vectors Hint":"切换启用的 Embedding 模型或 ONNX 精度后使用。","No imported models.":"暂无已导入模型。","Chat":"对话","Embedding":"Embedding","${1} files":"${1} 个文件","Active":"已启用","Use":"使用","Validating model by loading it offline...":"正在离线加载模型进行验证...","Model imported successfully":"模型导入成功","Select a model folder first.":"请先选择模型文件夹。","Preparing to import ${1} files...":"准备导入 ${1} 个文件...","Importing ${1}: ${2}%":"正在导入 ${1}: ${2}%","${1} imported and validated.":"${1} 已导入并验证通过。","No folder selected.":"未选择文件夹。","Selected ${1} files from ${2}. Click Import folder to continue.":"已从 ${2} 选择 ${1} 个文件，点击“导入文件夹”继续。","Local model importer ready. Select a model folder to import.":"本地模型导入器已就绪，请选择模型文件夹。","${1} precision set to ${2}. Reopen the assistant to apply.":"${1} 精度已切换为 ${2}，重新打开助手后生效。","${1} selected. Reopen the assistant to apply the change.":"${1} 已选中，重新打开助手后生效。","Select an imported Embedding model before rebuilding vectors.":"请先选择已导入的 Embedding 模型，再重构向量。","The active imported Embedding model was not found.":"未找到当前启用的本地 Embedding 模型。","Rebuild vectors for \"${1}\" (${2}) on next assistant open?":"是否在下次打开助手时为“${1}”（${2}）重构向量？","Waiting for vector rebuild confirmation...":"等待确认重构向量...","Vector rebuild canceled.":"已取消重构向量。","Vector rebuild requested for ${1}. Reopen the assistant to rebuild with progress.":"已请求为 ${1} 重构向量。重新打开助手后会显示构建进度。","Vector rebuild requested":"已请求重构向量","Delete imported model":"删除导入模型","Delete imported model \"${1}\"?":"确定删除导入模型“${1}”？","Waiting for delete confirmation for ${1}...":"等待确认删除 ${1}...","Delete canceled.":"已取消删除。","${1} deleted.":"${1} 已删除。","Model deleted":"模型已删除","Enable imported local models":"启用导入本地模型","Enable Imported Local Models Hint":"关闭时使用镜像站在线拉取的模型；开启后才使用下方选中的导入模型。","Use prebuilt vectors":"使用预构建向量","Use Prebuilt Vectors Hint":"开启后内置文档直接使用随包向量；查询和新导入文档使用当前启用的 Embedding 模型。建议与下方编译时模型和量化等级保持兼容。","Imported model selected. Enable local imported models to use it.":"已选中导入模型。请开启“启用导入本地模型”后使用。","Prebuilt vectors are enabled. Built-in vectors will be reused; no full rebuild is needed.":"已启用预构建向量。内置向量会直接复用，无需全量重构。","Enable local imported models before rebuilding imported vectors.":"请先开启“启用导入本地模型”，再重构导入模型的向量。","Selected":"已选中","Loaded cached vectors":"已加载缓存向量","Building vectors...":"正在构建向量...","Building vectors: ${1}/${2}":"正在构建向量：${1}/${2}","Embedding model selected. Disable prebuilt vectors to use it for built-in docs.":"已选中 Embedding 模型。关闭“使用预构建向量”后，它才会用于内置文档。","Rename":"重命名","Delete folder":"删除文件夹","Local Model Usage Guide":"使用说明","Local Model Usage Step 1":"默认保持“启用导入本地模型”关闭，助手会从镜像站在线拉取模型。","Local Model Usage Step 2":"需要离线模型时，先选择 Chat 或 Embedding 类型，再导入完整的 Transformers.js ONNX 模型文件夹。","Local Model Usage Step 3":"导入后点击模型行的 Use 只会选中模型；开启“启用导入本地模型”后才真正生效。","Local Model Usage Step 4":"开启“使用预构建向量”时，内置文档保持使用随包向量；当前启用的 Embedding 模型用于查询和新导入文档。","Local Model Usage Step 5":"只有关闭预构建向量，并希望用当前导入的 Embedding 模型重构内置文档时，才需要点击 Rebuild vectors。","Prebuilt Vector Build Info":"编译时模型：${1}；量化等级：${2}。","Prebuilt vectors are enabled. Built-in vectors are reused; the active Embedding model still handles queries and imported docs.":"已启用预构建向量。内置向量会直接复用；当前启用的 Embedding 模型仍会用于查询和新导入文档。","Embedding model selected. Prebuilt vectors stay enabled; this model will embed queries and imported docs.":"已选中 Embedding 模型。预构建向量保持开启；该模型将用于查询和新导入文档的向量化。","AI Generated Sources":"【Docs】AI 生成内容不一定正确，参考来源：${1}","Local AI Generated Sources":"【Docs】本地 AI 生成内容仅供参考，参考来源：${1}","Failed to read file: ${1}":"【WARN】读取文件失败：${1}"};
 		function t(tag, ...args) {
 			if (edaObj && edaObj.sys_I18n) return edaObj.sys_I18n.text(tag, undefined, undefined, ...args);
 			var text = _i18n[tag] || tag;
@@ -100,7 +175,8 @@
 		// Apply i18n to elements with special formatting (emojis, innerHTML)
 		document.title = t('AI Assistant Settings');
 		document.querySelector('h2').textContent = '⚙️ ' + t('AI Assistant Settings');
-		document.querySelector('.checkbox-label').innerHTML = '<input type="checkbox" id="cfg-enable-thinking" /> <span data-i18n="Enable Thinking Mode">' + t('Enable Thinking Mode') + '</span> ';
+		var thinkingLabel = document.getElementById('cfg-enable-thinking').parentElement;
+		thinkingLabel.innerHTML = '<input type="checkbox" id="cfg-enable-thinking" /> <span data-i18n="Enable Thinking Mode">' + t('Enable Thinking Mode') + '</span> ';
 		document.getElementById('save-btn').textContent = '💾 ' + t('Save');
 
 		var STORAGE_KEY = 'ai_assistant_config';
@@ -111,16 +187,27 @@
 		var cfgEmbeddingModel = document.getElementById('cfg-embedding-model');
 		var cfgLocalModel = document.getElementById('cfg-local-model');
 		var cfgModelMirror = document.getElementById('cfg-modelmirror');
+		var cfgLocalImportedEnabled = document.getElementById('cfg-local-imported-enabled');
+		var cfgUsePrebuiltVectors = document.getElementById('cfg-use-prebuilt-vectors');
 		var cfgEnableThinking = document.getElementById('cfg-enable-thinking');
 		var cfgHistoryRounds = document.getElementById('cfg-history-rounds');
 		var saveBtn = document.getElementById('save-btn');
 		var statusEl = document.getElementById('status');
+		var currentConfig = {};
+		function readCurrentConfig() {
+			try {
+				return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {};
+			} catch(e) {
+				return {};
+			}
+		}
 
 		// 加载
 		try {
 			var raw = localStorage.getItem(STORAGE_KEY);
 			if (raw) {
 				var obj = JSON.parse(raw);
+				currentConfig = obj || {};
 				cfgApiType.value = obj.apiType || 'openai';
 				cfgApiKey.value = obj.apiKey || '';
 				cfgModel.value = obj.model || '';
@@ -128,13 +215,24 @@
 				cfgEmbeddingModel.value = obj.embeddingModel || '';
 				cfgLocalModel.value = obj.localModel || '';
 				cfgModelMirror.value = obj.modelMirror || '';
+				cfgLocalImportedEnabled.checked = !!obj.localImportedModelsEnabled;
+				cfgUsePrebuiltVectors.checked = obj.usePrebuiltVectors !== false;
 				cfgEnableThinking.checked = !!obj.enableThinking;
 				cfgHistoryRounds.value = obj.historyRounds !== undefined ? String(obj.historyRounds) : '';
 			}
-		} catch(e) {}
+			else {
+				cfgUsePrebuiltVectors.checked = true;
+			}
+		} catch(e) {
+			cfgUsePrebuiltVectors.checked = true;
+		}
+		window.addEventListener('ai-assistant-config-updated', function() {
+			currentConfig = readCurrentConfig();
+		});
 
 		// 保存
 		saveBtn.addEventListener('click', function() {
+			currentConfig = readCurrentConfig();
 			var config = {
 				apiType: cfgApiType.value,
 				apiKey: cfgApiKey.value.trim(),
@@ -143,10 +241,19 @@
 				embeddingModel: cfgEmbeddingModel.value.trim(),
 				localModel: cfgLocalModel.value.trim(),
 				modelMirror: cfgModelMirror.value.trim(),
+				localImportedModelsEnabled: cfgLocalImportedEnabled.checked,
+				usePrebuiltVectors: cfgUsePrebuiltVectors.checked,
+				textModelSource: currentConfig.textModelSource || 'remote',
+				textModelId: currentConfig.textModelId || '',
+				embeddingModelSource: currentConfig.embeddingModelSource || 'remote',
+				embeddingModelId: currentConfig.embeddingModelId || '',
+				embeddingIndexVersion: currentConfig.embeddingIndexVersion || '',
+				embeddingVectorRebuildToken: currentConfig.embeddingVectorRebuildToken || '',
 				enableThinking: cfgEnableThinking.checked,
 				historyRounds: cfgHistoryRounds.value.trim() === '' ? undefined : parseInt(cfgHistoryRounds.value, 10),
 			};
 			localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+			window.dispatchEvent(new CustomEvent('ai-assistant-config-updated'));
 			statusEl.textContent = '✅ ' + t('Settings Saved');
 			setTimeout(function() { statusEl.textContent = ''; }, 3000);
 			try {
@@ -154,5 +261,6 @@
 			} catch(e) {}
 		});
 	</script>
+	<script src="/iframe/model-manager.js"></script>
 </body>
 </html>

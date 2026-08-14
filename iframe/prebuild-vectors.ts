@@ -7,11 +7,13 @@ import { Buffer } from 'node:buffer';
  */
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import process from 'node:process';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
+import { PREBUILT_VECTOR_DTYPE, PREBUILT_VECTOR_MODEL_NAME } from './src/prebuilt-vector-info';
 
 const DOCS_DIR = join(__dirname, 'docs');
 const OUTPUT_FILE = join(__dirname, 'src', 'builtin-vectors.json');
-const MODEL_NAME = 'Xenova/bge-large-zh-v1.5';
+const MODEL_REMOTE_HOST = process.env.TRANSFORMERS_REMOTE_HOST || process.env.HF_ENDPOINT || 'https://hf-mirror.com';
 
 interface VectorEntry {
 	text: string;
@@ -21,6 +23,29 @@ interface VectorEntry {
 
 const TABLE_ROW_RE = /^\|.+\|$/;
 const TABLE_SEP_RE = /^\|[\s:|-]+\|$/;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function retry<T>(label: string, task: () => Promise<T>, attempts = 3): Promise<T> {
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= attempts; attempt++) {
+		try {
+			return await task();
+		}
+		catch (error) {
+			lastError = error;
+			if (attempt >= attempts) {
+				break;
+			}
+			const waitMs = attempt * 3000;
+			console.warn(`[Warn] ${label} failed (${attempt}/${attempts}), retrying in ${waitMs / 1000}s...`);
+			await sleep(waitMs);
+		}
+	}
+	throw lastError;
+}
 
 function repairTableChunk(chunk: string, fullContent: string): string {
 	const lines = chunk.split('\n');
@@ -118,9 +143,14 @@ async function main() {
 
 	// 3. 生成向量
 	console.warn(' 加载 Embedding 模型...');
-	const { AutoTokenizer, AutoModel } = await import('@huggingface/transformers');
-	const tokenizer = await AutoTokenizer.from_pretrained(MODEL_NAME);
-	const model = await AutoModel.from_pretrained(MODEL_NAME, { dtype: 'q8' });
+	const { AutoModel, AutoTokenizer, env } = await import('@huggingface/transformers');
+	env.allowLocalModels = false;
+	env.allowRemoteModels = true;
+	env.remoteHost = MODEL_REMOTE_HOST;
+	env.remotePathTemplate = '{model}/resolve/{revision}/';
+	console.warn(` 使用模型源: ${MODEL_REMOTE_HOST}`);
+	const tokenizer = await retry('Tokenizer download/load', () => AutoTokenizer.from_pretrained(PREBUILT_VECTOR_MODEL_NAME));
+	const model = await retry('Embedding model download/load', () => AutoModel.from_pretrained(PREBUILT_VECTOR_MODEL_NAME, { dtype: PREBUILT_VECTOR_DTYPE }));
 
 	const entries: VectorEntry[] = [];
 	const batchSize = 8;
@@ -198,4 +228,8 @@ async function main() {
 	console.warn(`【Done】 已生成 ${OUTPUT_FILE} (${entries.length} 条, ${sizeMB} MB)`);
 }
 
-main().catch(console.error);
+main().catch((error) => {
+	console.error(error);
+	console.error('[Error] Failed to prebuild builtin vectors. Check network access to the model host, or set TRANSFORMERS_REMOTE_HOST/HF_ENDPOINT to a reachable mirror.');
+	process.exitCode = 1;
+});

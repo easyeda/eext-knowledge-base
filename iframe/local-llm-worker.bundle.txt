@@ -33206,6 +33206,36 @@ var TextStreamer = class extends BaseStreamer {
 };
 var CONCRETE_DTYPES = Object.keys(DEFAULT_DTYPE_SUFFIX_MAPPING);
 
+// iframe/src/model-store.ts
+var CACHE_PREFIX = "eext-ai-model-";
+var CACHE_PATH = "/__eext_models__";
+function normalizePath(path) {
+  return path.replaceAll("\\", "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== ".").join("/");
+}
+function modelCacheName(id) {
+  return `${CACHE_PREFIX}${id}`;
+}
+function modelRequest(id, path) {
+  return new Request(`${location.origin}${CACHE_PATH}/${id}/${normalizePath(path)}`);
+}
+function createImportedModelCache(model) {
+  return {
+    async match(request) {
+      const raw = typeof request === "string" ? request : request instanceof URL ? request.href : request.url;
+      const decoded = decodeURIComponent(raw.split("?")[0]);
+      const path = model.files.find((file) => decoded.endsWith(`/${file}`) || decoded === file);
+      if (!path) {
+        return void 0;
+      }
+      const cache2 = await caches.open(modelCacheName(model.id));
+      return cache2.match(modelRequest(model.id, path));
+    },
+    async put() {
+      throw new Error("Imported model cache is read-only.");
+    }
+  };
+}
+
 // iframe/src/local-llm-worker.ts
 var DEFAULT_MODEL_NAME = "onnx-community/Qwen2.5-0.5B-Instruct";
 var numCores = navigator.hardwareConcurrency || 4;
@@ -33226,15 +33256,28 @@ globalThis.onmessage = async (e) => {
   }
   if (type === "init") {
     try {
-      const modelName = payload.modelName || DEFAULT_MODEL_NAME;
-      const dtype = payload.dtype || "q8";
-      env2.allowLocalModels = false;
-      env2.allowRemoteModels = true;
-      env2.remoteHost = payload.modelMirror || "https://hf-mirror.com";
-      env2.remotePathTemplate = "{model}/resolve/{revision}/";
+      const importedModel = payload.importedModel;
+      const modelName = importedModel ? `imported/${importedModel.id}` : payload.modelName || DEFAULT_MODEL_NAME;
+      const dtype = importedModel ? importedModel.selectedDtype || "auto" : payload.dtype || "q8";
+      if (importedModel) {
+        env2.allowLocalModels = true;
+        env2.allowRemoteModels = false;
+        env2.useBrowserCache = false;
+        env2.useCustomCache = true;
+        env2.customCache = createImportedModelCache(importedModel);
+      } else {
+        env2.allowLocalModels = false;
+        env2.allowRemoteModels = true;
+        env2.useBrowserCache = true;
+        env2.useCustomCache = false;
+        env2.customCache = null;
+        env2.remoteHost = payload.modelMirror || "https://hf-mirror.com";
+        env2.remotePathTemplate = "{model}/resolve/{revision}/";
+      }
       globalThis.postMessage({ type: "progress", message: "Loading local AI model..." });
       generator = await pipeline2("text-generation", modelName, {
         dtype,
+        local_files_only: !!importedModel,
         progress_callback: (p) => {
           if (p.status === "ready") {
             globalThis.postMessage({ type: "progress", message: "Local AI model loaded" });

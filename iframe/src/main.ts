@@ -1,24 +1,26 @@
 import type { RAGConfig } from './rag';
 import { marked } from 'marked';
-import { builtinVectors } from './builtin-docs';
+import { builtinVectors, PREBUILT_VECTOR_MODEL_NAME } from './builtin-docs';
 import { LocalLLM } from './local-llm';
+import { getImportedModel } from './model-store';
 import { RAGEngine } from './rag';
+import { deleteVectorCache, importedVectorCacheKey, readVectorCache, remoteVectorCacheKey, writeVectorCache } from './vector-cache';
 
 declare const eda: any;
 
 // ============================================================
-// 配置
+// 閰嶇疆
 // ============================================================
 const STORAGE_KEY = 'ai_assistant_config';
 const KB_STATE_KEY = 'ai_assistant_kb_state';
 
-/** 知识库状态持久化 */
+/** 鐭ヨ瘑搴撶姸鎬佹寔涔呭寲 */
 interface KBState {
-	/** 已删除的内置知识库 source keys */
+	/** 宸插垹闄ょ殑鍐呯疆鐭ヨ瘑搴?source keys */
 	deletedSources: string[];
-	/** 用户导入的文档（source key -> content） */
+	/** 鐢ㄦ埛瀵煎叆鐨勬枃妗ｏ紙source key -> content锛? */
 	userDocuments: Record<string, string>;
-	/** 导入计数器 */
+	/** 瀵煎叆璁℃暟鍣? */
 	importCounter: number;
 }
 
@@ -42,7 +44,7 @@ function saveKBState(state: KBState): void {
 
 let kbState = loadKBState();
 
-function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: string; localDtype?: string } {
+function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: string; localDtype?: string; localImportedModelsEnabled?: boolean; usePrebuiltVectors?: boolean; textModelSource?: 'remote' | 'imported'; textModelId?: string; embeddingModelSource?: 'remote' | 'imported'; embeddingModelId?: string; embeddingVectorRebuildToken?: string } {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (raw) {
@@ -56,21 +58,32 @@ function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: strin
 				embeddingModel: obj.embeddingModel || '',
 				localModel: obj.localModel || '',
 				localDtype: obj.localDtype || '',
+				localImportedModelsEnabled: !!obj.localImportedModelsEnabled,
+				usePrebuiltVectors: obj.usePrebuiltVectors !== false,
+				textModelSource: obj.textModelSource || 'remote',
+				textModelId: obj.textModelId || '',
+				embeddingModelSource: obj.embeddingModelSource || 'remote',
+				embeddingModelId: obj.embeddingModelId || '',
+				embeddingVectorRebuildToken: obj.embeddingVectorRebuildToken || '',
 				enableThinking: !!obj.enableThinking,
 				historyRounds: obj.historyRounds !== undefined ? obj.historyRounds : 3,
 			};
 		}
 	}
 	catch { /* ignore */ }
-	return { apiType: 'openai', apiKey: '', model: '', baseURL: '', modelMirror: '', embeddingModel: '', localModel: '', localDtype: '', enableThinking: false, historyRounds: 3 };
+	return { apiType: 'openai', apiKey: '', model: '', baseURL: '', modelMirror: '', embeddingModel: '', localModel: '', localDtype: '', localImportedModelsEnabled: false, usePrebuiltVectors: true, textModelSource: 'remote', textModelId: '', embeddingModelSource: 'remote', embeddingModelId: '', embeddingVectorRebuildToken: '', enableThinking: false, historyRounds: 3 };
+}
+
+function saveConfig(config: ReturnType<typeof loadConfig>): void {
+	localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
 }
 
 // ============================================================
-// 树形文件夹数据结构
+// 鏍戝舰鏂囦欢澶规暟鎹粨鏋?
 // ============================================================
 interface DocNode {
 	name: string;
-	/** 完整路径，用于 source key 前缀 */
+	/** 瀹屾暣璺緞锛岀敤浜?source key 鍓嶇紑 */
 	path: string;
 	collapsed: boolean;
 	children: DocNode[];
@@ -80,7 +93,7 @@ interface DocNode {
 const rootNodes: DocNode[] = [];
 let importCounter = 1;
 
-/** 标记 source 为已删除 */
+/** 鏍囪 source 涓哄凡鍒犻櫎 */
 function markSourceDeleted(source: string): void {
 	if (!kbState.deletedSources.includes(source)) {
 		kbState.deletedSources.push(source);
@@ -88,13 +101,13 @@ function markSourceDeleted(source: string): void {
 	}
 }
 
-/** 保存用户文档 */
+/** 淇濆瓨鐢ㄦ埛鏂囨。 */
 function saveUserDocument(sourceKey: string, content: string): void {
 	kbState.userDocuments[sourceKey] = content;
 	saveKBState(kbState);
 }
 
-/** 删除用户文档 */
+/** 鍒犻櫎鐢ㄦ埛鏂囨。 */
 function removeUserDocument(sourceKey: string): void {
 	delete kbState.userDocuments[sourceKey];
 	saveKBState(kbState);
@@ -104,7 +117,7 @@ function getSourceKey(folderPath: string, file: string): string {
 	return `${folderPath}/${file}`;
 }
 
-/** 递归统计节点下所有文件数 */
+/** 閫掑綊缁熻鑺傜偣涓嬫墍鏈夋枃浠舵暟 */
 function countFiles(node: DocNode): number {
 	let count = node.files.length;
 	for (const child of node.children) {
@@ -113,7 +126,7 @@ function countFiles(node: DocNode): number {
 	return count;
 }
 
-/** 递归统计所有根节点下的文件总数 */
+/** 閫掑綊缁熻鎵€鏈夋牴鑺傜偣涓嬬殑鏂囦欢鎬绘暟 */
 function countAllFiles(): number {
 	let total = 0;
 	for (const node of rootNodes) {
@@ -122,7 +135,7 @@ function countAllFiles(): number {
 	return total;
 }
 
-/** 递归收集节点下所有 source key */
+/** 閫掑綊鏀堕泦鑺傜偣涓嬫墍鏈?source key */
 function collectSourceKeys(node: DocNode): string[] {
 	const keys: string[] = [];
 	for (const file of node.files) {
@@ -134,7 +147,7 @@ function collectSourceKeys(node: DocNode): string[] {
 	return keys;
 }
 
-/** 根据路径段在树中查找或创建子文件夹节点 */
+/** 鏍规嵁璺緞娈靛湪鏍戜腑鏌ユ壘鎴栧垱寤哄瓙鏂囦欢澶硅妭鐐? */
 function ensureFolder(parent: DocNode[], parentPath: string, segments: string[]): DocNode {
 	if (segments.length === 0) {
 		throw new Error('segments must not be empty');
@@ -153,12 +166,15 @@ function ensureFolder(parent: DocNode[], parentPath: string, segments: string[])
 }
 
 // ============================================================
-// 状态
+// 鐘舵€?
 // ============================================================
 const config = loadConfig();
+const usePrebuiltVectors = config.usePrebuiltVectors !== false;
+const importedEmbeddingModel = config.localImportedModelsEnabled && config.embeddingModelSource === 'imported' ? getImportedModel(config.embeddingModelId) : undefined;
+const embeddingModelName = importedEmbeddingModel ? '' : usePrebuiltVectors ? PREBUILT_VECTOR_MODEL_NAME : config.embeddingModel;
 const engine = new RAGEngine((msg) => {
-	addSystemMessage(`【Think】 ${msg}`);
-}, config.modelMirror, config.embeddingModel);
+	addSystemMessage(`【Think】${msg}`);
+}, config.modelMirror, embeddingModelName, importedEmbeddingModel);
 
 // ============================================================
 // DOM
@@ -175,6 +191,9 @@ const modeApiBtn = document.getElementById('mode-api') as HTMLButtonElement;
 const modeLocalBtn = document.getElementById('mode-local') as HTMLButtonElement;
 const modeIndexBtn = document.getElementById('mode-index') as HTMLButtonElement;
 const rebuildIndexBtn = document.getElementById('rebuild-index') as HTMLButtonElement;
+const vectorProgress = document.getElementById('vector-progress')!;
+const vectorProgressText = vectorProgress.querySelector('.vector-progress-text') as HTMLElement;
+const vectorProgressBar = vectorProgress.querySelector('.vector-progress-bar') as HTMLElement;
 const previewModal = document.getElementById('preview-modal')!;
 const previewTitle = document.getElementById('preview-title')!;
 const previewBody = document.getElementById('preview-body')!;
@@ -182,7 +201,7 @@ const previewClose = document.getElementById('preview-close') as HTMLButtonEleme
 const previewVisit = document.getElementById('preview-visit') as HTMLAnchorElement;
 
 // ============================================================
-// 模式管理
+// 妯″紡绠＄悊
 // ============================================================
 type SearchMode = 'api' | 'local' | 'index';
 let currentMode: SearchMode = 'api';
@@ -199,13 +218,13 @@ function setMode(mode: SearchMode): void {
 			? eda.sys_I18n.text('Input your question (local AI)...')
 			: eda.sys_I18n.text('Input keywords to search knowledge base...');
 
-	// 首次切到关键词检索模式时，弹窗提示需要创建索引
+	// 棣栨鍒囧埌鍏抽敭璇嶆绱㈡ā寮忔椂锛屽脊绐楁彁绀洪渶瑕佸垱寤虹储寮?
 	if (mode === 'index') {
 		showIndexBuildDialogIfNeeded();
 	}
 }
 
-/** 记录是否已弹窗提示过（本次会话内只提示一次） */
+/** 璁板綍鏄惁宸插脊绐楁彁绀鸿繃锛堟湰娆′細璇濆唴鍙彁绀轰竴娆★級 */
 let indexDialogShown = false;
 
 function showIndexBuildDialogIfNeeded(): void {
@@ -227,14 +246,14 @@ function showIndexBuildDialogIfNeeded(): void {
 	);
 }
 
-/** 重建搜索索引 */
+/** 閲嶅缓鎼滅储绱㈠紩 */
 function rebuildSearchIndex(): void {
 	if (engine.documentCount === 0) {
 		addSystemMessage(eda.sys_I18n.text('Knowledge base is empty, nothing to index.'));
 		return;
 	}
 	eda.sys_Message.showToastMessage(eda.sys_I18n.text('Building index, please wait...'), 1, 3);
-	// 用 setTimeout 让 UI 先更新
+	// 鐢?setTimeout 璁?UI 鍏堟洿鏂?
 	setTimeout(() => {
 		const start = Date.now();
 		engine.buildSearchIndex();
@@ -245,15 +264,36 @@ function rebuildSearchIndex(): void {
 	}, 50);
 }
 
+function setVectorProgress(message: string, done = 0, total = 0): void {
+	vectorProgress.style.display = '';
+	vectorProgressText.textContent = message;
+	const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+	vectorProgressBar.style.width = `${percent}%`;
+}
+
+function hideVectorProgress(): void {
+	vectorProgress.style.display = 'none';
+	vectorProgressBar.style.width = '0%';
+}
+
+function acknowledgeVectorRebuildRequest(): void {
+	const latest = loadConfig();
+	if (!latest.embeddingVectorRebuildToken) {
+		return;
+	}
+	latest.embeddingVectorRebuildToken = '';
+	saveConfig(latest);
+}
+
 // ============================================================
-// 初始化
+// 鍒濆鍖?
 // ============================================================
 addSystemMessage(eda.sys_I18n.text('Welcome to AI Knowledge Base Assistant'));
 if (!config.apiKey || !config.model || !config.baseURL) {
 	addSystemMessage(eda.sys_I18n.text('Please configure API Key, model name and API URL in the Settings menu'));
 }
 
-// 先加载用户文档（已在内存中），再加载内置知识库
+// 鍏堝姞杞界敤鎴锋枃妗ｏ紙宸插湪鍐呭瓨涓級锛屽啀鍔犺浇鍐呯疆鐭ヨ瘑搴?
 loadUserDocuments();
 loadBuiltinDocs();
 
@@ -267,7 +307,7 @@ userInput.addEventListener('keydown', (e) => {
 	}
 });
 
-// 模式切换事件
+// 妯″紡鍒囨崲浜嬩欢
 modeApiBtn.addEventListener('click', () => setMode('api'));
 modeLocalBtn.addEventListener('click', () => setMode('local'));
 modeIndexBtn.addEventListener('click', () => setMode('index'));
@@ -285,7 +325,7 @@ rebuildIndexBtn.addEventListener('click', () => {
 	);
 });
 
-// 预览弹窗关闭事件
+// 棰勮寮圭獥鍏抽棴浜嬩欢
 previewClose.addEventListener('click', closePreviewModal);
 previewModal.addEventListener('click', (e) => {
 	if (e.target === previewModal) {
@@ -293,7 +333,7 @@ previewModal.addEventListener('click', (e) => {
 	}
 });
 
-// ESC 关闭预览弹窗
+// ESC 鍏抽棴棰勮寮圭獥
 document.addEventListener('keydown', (e) => {
 	if (e.key === 'Escape' && previewModal.classList.contains('show')) {
 		closePreviewModal();
@@ -301,19 +341,70 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ============================================================
-// 内置知识库
+// 鍐呯疆鐭ヨ瘑搴?
 // ============================================================
 async function loadBuiltinDocs(): Promise<void> {
 	if (builtinVectors.length === 0) {
 		return;
 	}
-	// 过滤掉已删除的内置文档
+	// 杩囨护鎺夊凡鍒犻櫎鐨勫唴缃枃妗?
 	const filteredVectors = builtinVectors.filter(v => !kbState.deletedSources.includes(v.source));
+	const filteredSources = new Set(filteredVectors.map(v => v.source));
 
 	try {
 		if (filteredVectors.length > 0) {
-			const count = await engine.loadPrebuiltVectors(filteredVectors);
-			// 按路径分组到树形结构
+			let count: number;
+			if (usePrebuiltVectors) {
+				count = await engine.loadPrebuiltVectors(filteredVectors);
+				acknowledgeVectorRebuildRequest();
+			}
+			else if (importedEmbeddingModel) {
+				const cacheKey = importedVectorCacheKey(importedEmbeddingModel.id, importedEmbeddingModel.selectedDtype);
+				const forceRebuild = !!config.embeddingVectorRebuildToken;
+				if (forceRebuild) {
+					await deleteVectorCache(cacheKey);
+				}
+				let cachedVectors = forceRebuild ? null : await readVectorCache(cacheKey);
+				if (cachedVectors) {
+					cachedVectors = cachedVectors.filter(v => filteredSources.has(v.source));
+					setVectorProgress(`Loaded cached vectors for ${importedEmbeddingModel.name}`, cachedVectors.length, cachedVectors.length);
+				}
+				else {
+					setVectorProgress(`Building vectors with ${importedEmbeddingModel.name}...`, 0, filteredVectors.length);
+					cachedVectors = await engine.embedAndLoadChunks(filteredVectors.map(v => ({ text: v.text, source: v.source })), (done, total) => {
+						setVectorProgress(`Building vectors with ${importedEmbeddingModel.name}: ${done}/${total}`, done, total);
+					});
+					await writeVectorCache(cacheKey, cachedVectors);
+				}
+				setVectorProgress(`Loading vectors for ${importedEmbeddingModel.name}...`, cachedVectors.length, cachedVectors.length);
+				await engine.loadPrebuiltVectors(cachedVectors);
+				if (forceRebuild) {
+					acknowledgeVectorRebuildRequest();
+				}
+				count = cachedVectors.length;
+				setTimeout(hideVectorProgress, 1200);
+			}
+			else {
+				const modelName = config.embeddingModel || PREBUILT_VECTOR_MODEL_NAME;
+				const cacheKey = remoteVectorCacheKey(modelName);
+				let cachedVectors = await readVectorCache(cacheKey);
+				if (cachedVectors) {
+					cachedVectors = cachedVectors.filter(v => filteredSources.has(v.source));
+					setVectorProgress(eda.sys_I18n.text('Loaded cached vectors'), cachedVectors.length, cachedVectors.length);
+				}
+				else {
+					setVectorProgress(eda.sys_I18n.text('Building vectors...'), 0, filteredVectors.length);
+					cachedVectors = await engine.embedAndLoadChunks(filteredVectors.map(v => ({ text: v.text, source: v.source })), (done, total) => {
+						// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+						setVectorProgress(eda.sys_I18n.text('Building vectors: ${1}/${2}', undefined, undefined, String(done), String(total)), done, total);
+					});
+					await writeVectorCache(cacheKey, cachedVectors);
+				}
+				await engine.loadPrebuiltVectors(cachedVectors);
+				count = cachedVectors.length;
+				setTimeout(hideVectorProgress, 1200);
+			}
+			// 鎸夎矾寰勫垎缁勫埌鏍戝舰缁撴瀯
 			for (const v of filteredVectors) {
 				const parts = v.source.split('/');
 				const file = parts.pop()!;
@@ -337,7 +428,7 @@ async function loadBuiltinDocs(): Promise<void> {
 }
 
 // ============================================================
-// 用户文档
+// 鐢ㄦ埛鏂囨。
 // ============================================================
 async function loadUserDocuments(): Promise<void> {
 	const entries = Object.entries(kbState.userDocuments);
@@ -345,7 +436,7 @@ async function loadUserDocuments(): Promise<void> {
 		return;
 	}
 
-	// 按 source key 路径分组
+	// 鎸?source key 璺緞鍒嗙粍
 	const folderMap = new Map<string, Array<{ file: string; content: string }>>();
 	for (const [sourceKey, content] of entries) {
 		const parts = sourceKey.split('/');
@@ -357,7 +448,7 @@ async function loadUserDocuments(): Promise<void> {
 		folderMap.get(folderPath)!.push({ file, content });
 	}
 
-	// 加载每个文件夹
+	// 鍔犺浇姣忎釜鏂囦欢澶?
 	for (const [folderPath, files] of folderMap) {
 		const folderSegments = folderPath.split('/').filter(Boolean);
 		const folder = ensureFolder(rootNodes, '', folderSegments);
@@ -382,7 +473,7 @@ async function loadUserDocuments(): Promise<void> {
 }
 
 // ============================================================
-// 文件上传 — 创建新文件夹
+// 鏂囦欢涓婁紶 鈥?鍒涘缓鏂版枃浠跺す
 // ============================================================
 async function handleFileUpload(e: Event): Promise<void> {
 	const target = e.target as HTMLInputElement;
@@ -391,7 +482,7 @@ async function handleFileUpload(e: Event): Promise<void> {
 		return;
 	}
 
-	const folderName = `导入 ${importCounter++}`;
+	const folderName = `瀵煎叆 ${importCounter++}`;
 	const folder: DocNode = { name: folderName, path: folderName, collapsed: false, children: [], files: [] };
 
 	let totalChunks = 0;
@@ -402,11 +493,11 @@ async function handleFileUpload(e: Event): Promise<void> {
 			const chunks = await engine.addDocument(sourceKey, text);
 			folder.files.push(file.name);
 			totalChunks += chunks;
-			// 持久化用户文档
+			// 鎸佷箙鍖栫敤鎴锋枃妗?
 			saveUserDocument(sourceKey, text);
 		}
 		catch {
-			addSystemMessage(`读取文件失败: ${file.name}`);
+			addSystemMessage(`璇诲彇鏂囦欢澶辫触: ${file.name}`);
 		}
 	}
 
@@ -414,7 +505,7 @@ async function handleFileUpload(e: Event): Promise<void> {
 		rootNodes.push(folder);
 	}
 
-	// 保存导入计数器
+	// 淇濆瓨瀵煎叆璁℃暟鍣?
 	kbState.importCounter = importCounter;
 	saveKBState(kbState);
 
@@ -425,7 +516,7 @@ async function handleFileUpload(e: Event): Promise<void> {
 }
 
 // ============================================================
-// 文件夹操作
+// 鏂囦欢澶规搷浣?
 // ============================================================
 function toggleNode(node: DocNode): void {
 	node.collapsed = !node.collapsed;
@@ -451,16 +542,16 @@ function renameNode(node: DocNode, headerEl: HTMLElement): void {
 	const commit = async () => {
 		const newName = input.value.trim() || oldName;
 		if (newName !== oldName) {
-			// 更新路径
+			// 鏇存柊璺緞
 			const newPath = oldPath.endsWith(oldName)
 				? oldPath.slice(0, -oldName.length) + newName
 				: newName;
-			// 收集旧 source keys
+			// 鏀堕泦鏃?source keys
 			const oldKeys = collectSourceKeys(node);
-			// 更新节点
+			// 鏇存柊鑺傜偣
 			node.name = newName;
 			updateNodePaths(node, newPath);
-			// 更新 engine 中的 source keys
+			// 鏇存柊 engine 涓殑 source keys
 			const newKeys = collectSourceKeys(node);
 			for (let i = 0; i < oldKeys.length; i++) {
 				await engine.renameSource(oldKeys[i], newKeys[i]);
@@ -481,7 +572,7 @@ function renameNode(node: DocNode, headerEl: HTMLElement): void {
 	});
 }
 
-/** 递归更新节点及子节点的 path */
+/** 閫掑綊鏇存柊鑺傜偣鍙婂瓙鑺傜偣鐨?path */
 function updateNodePaths(node: DocNode, newPath: string): void {
 	node.path = newPath;
 	for (const child of node.children) {
@@ -506,7 +597,7 @@ function deleteNode(node: DocNode, parentArray: DocNode[]): void {
 			if (sourceKeys.length > 0) {
 				await engine.removeDocuments(sourceKeys);
 			}
-			// 标记为已删除（用于内置知识库）或从用户文档中移除
+			// 鏍囪涓哄凡鍒犻櫎锛堢敤浜庡唴缃煡璇嗗簱锛夋垨浠庣敤鎴锋枃妗ｄ腑绉婚櫎
 			for (const key of sourceKeys) {
 				if (kbState.userDocuments[key]) {
 					removeUserDocument(key);
@@ -541,7 +632,7 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Deleting, please do not close the page or browser...'), 1, 3);
 			const sourceKey = getSourceKey(node.path, file);
 			await engine.removeDocuments([sourceKey]);
-			// 标记为已删除（用于内置知识库）或从用户文档中移除
+			// 鏍囪涓哄凡鍒犻櫎锛堢敤浜庡唴缃煡璇嗗簱锛夋垨浠庣敤鎴锋枃妗ｄ腑绉婚櫎
 			if (kbState.userDocuments[sourceKey]) {
 				removeUserDocument(sourceKey);
 			}
@@ -549,7 +640,7 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 				markSourceDeleted(sourceKey);
 			}
 			node.files.splice(fileIdx, 1);
-			// 如果文件夹空了（无文件也无子文件夹），移除节点
+			// 濡傛灉鏂囦欢澶圭┖浜嗭紙鏃犳枃浠朵篃鏃犲瓙鏂囦欢澶癸級锛岀Щ闄よ妭鐐?
 			if (node.files.length === 0 && node.children.length === 0) {
 				const idx = parentArray.indexOf(node);
 				if (idx >= 0) {
@@ -564,7 +655,7 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 }
 
 // ============================================================
-// RAG 问答
+// RAG 闂瓟
 // ============================================================
 let currentAbortController: AbortController | null = null;
 let stopped = false;
@@ -617,7 +708,7 @@ async function handleSend(): Promise<void> {
 	catch (err: any) {
 		if (err.name !== 'AbortError') {
 			statusDiv.remove();
-			addMessage('system', `【ERROR】 ${err.message || err}`);
+			addMessage('system', `[ERROR] ${err.message || err}`);
 		}
 	}
 	finally {
@@ -628,9 +719,9 @@ async function handleSend(): Promise<void> {
 	}
 }
 
-/** 索引模式：使用本地倒排索引检索 */
+/** 绱㈠紩妯″紡锛氫娇鐢ㄦ湰鍦板€掓帓绱㈠紩妫€绱? */
 async function handleIndexSearch(question: string, statusDiv: HTMLElement): Promise<void> {
-	// 如果索引过期（文档有增删），先提示
+	// 濡傛灉绱㈠紩杩囨湡锛堟枃妗ｆ湁澧炲垹锛夛紝鍏堟彁绀?
 	if (engine.isIndexStale) {
 		statusDiv.textContent = eda.sys_I18n.text('Building index, please wait...');
 	}
@@ -643,7 +734,7 @@ async function handleIndexSearch(question: string, statusDiv: HTMLElement): Prom
 		return;
 	}
 
-	// 创建检索结果容器
+	// 鍒涘缓妫€绱㈢粨鏋滃鍣?
 	const resultDiv = document.createElement('div');
 	resultDiv.className = 'message assistant';
 
@@ -657,7 +748,7 @@ async function handleIndexSearch(question: string, statusDiv: HTMLElement): Prom
 
 	for (let i = 0; i < results.length; i++) {
 		const result = results[i];
-		// 获取文档标题
+		// 鑾峰彇鏂囨。鏍囬
 		const title = engine.getDocumentTitle(result.source);
 		const titleHtml = title ? `<span class="search-result-title">${escapeHtml(title)}</span>` : '';
 
@@ -675,7 +766,7 @@ async function handleIndexSearch(question: string, statusDiv: HTMLElement): Prom
 			<div class="search-result-content">${highlightText(escapeHtml(result.content), question)}</div>
 		`;
 
-		// 点击打开预览 - 传入source和用户输入的question用于高亮
+		// 鐐瑰嚮鎵撳紑棰勮 - 浼犲叆source鍜岀敤鎴疯緭鍏ョ殑question鐢ㄤ簬楂樹寒
 		itemDiv.addEventListener('click', () => {
 			openPreviewModal(result.source, question);
 		});
@@ -688,7 +779,7 @@ async function handleIndexSearch(question: string, statusDiv: HTMLElement): Prom
 	chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-/** API 模式：调用在线 API */
+/** API 妯″紡锛氳皟鐢ㄥ湪绾?API */
 async function handleApiQuery(question: string, statusDiv: HTMLElement): Promise<void> {
 	const cfg = loadConfig();
 	if (!cfg.apiKey || !cfg.model || !cfg.baseURL) {
@@ -699,7 +790,7 @@ async function handleApiQuery(question: string, statusDiv: HTMLElement): Promise
 
 	const origOnStatus = engine.onStatus;
 	engine.onStatus = (msg: string) => {
-		statusDiv.textContent = `【Think】 ${msg}`;
+		statusDiv.textContent = `[Think] ${msg}`;
 		chatMessages.scrollTop = chatMessages.scrollHeight;
 	};
 
@@ -730,7 +821,7 @@ async function handleApiQuery(question: string, statusDiv: HTMLElement): Promise
 	if (sources.length > 0) {
 		const srcDiv = document.createElement('div');
 		srcDiv.className = 'sources';
-		srcDiv.textContent = `【Docs】 AI生成内容不一定正确，参考来源: ${sources.join(', ')}`;
+		srcDiv.textContent = eda.sys_I18n.text('AI Generated Sources', undefined, undefined, sources.join(', '));
 		msgDiv.appendChild(srcDiv);
 	}
 
@@ -739,16 +830,20 @@ async function handleApiQuery(question: string, statusDiv: HTMLElement): Promise
 
 async function handleLocalQuery(question: string, statusDiv: HTMLElement): Promise<void> {
 	const cfg = loadConfig();
+	const importedTextModel = cfg.localImportedModelsEnabled && cfg.textModelSource === 'imported'
+		? getImportedModel(cfg.textModelId)
+		: undefined;
 
 	if (!localLLM) {
 		localLLM = new LocalLLM({
 			onProgress: (msg) => {
-				statusDiv.textContent = `【Model】 ${msg}`;
+				statusDiv.textContent = `[Model] ${msg}`;
 				chatMessages.scrollTop = chatMessages.scrollHeight;
 			},
 			modelMirror: cfg.modelMirror,
 			modelName: cfg.localModel,
 			dtype: cfg.localDtype,
+			importedModel: importedTextModel,
 		});
 	}
 
@@ -785,28 +880,28 @@ async function handleLocalQuery(question: string, statusDiv: HTMLElement): Promi
 	if (sources.length > 0) {
 		const srcDiv = document.createElement('div');
 		srcDiv.className = 'sources';
-		srcDiv.textContent = `【Docs】 本地AI生成内容仅供参考，参考来源: ${sources.join(', ')}`;
+		srcDiv.textContent = eda.sys_I18n.text('Local AI Generated Sources', undefined, undefined, sources.join(', '));
 		msgDiv.appendChild(srcDiv);
 	}
 }
 
 // ============================================================
-// 工具函数
+// 宸ュ叿鍑芥暟
 // ============================================================
 
-/** HTML 转义 */
+/** HTML 杞箟 */
 function escapeHtml(text: string): string {
 	const div = document.createElement('div');
 	div.textContent = text;
 	return div.innerHTML;
 }
 
-/** 高亮关键词 */
+/** 楂樹寒鍏抽敭璇? */
 function highlightText(text: string, keyword: string): string {
 	if (!keyword.trim()) {
 		return text;
 	}
-	// 分词并转义正则特殊字符
+	// 鍒嗚瘝骞惰浆涔夋鍒欑壒娈婂瓧绗?
 	const words = keyword.split(/\s+/).filter(w => w.length > 0);
 	if (words.length === 0) {
 		return text;
@@ -821,11 +916,11 @@ function highlightText(text: string, keyword: string): string {
 	return result;
 }
 
-/** 打开预览弹窗 */
+/** 鎵撳紑棰勮寮圭獥 */
 function openPreviewModal(source: string, highlightKeyword: string): void {
 	previewTitle.textContent = source;
 
-	// 设置在线文档链接
+	// 璁剧疆鍦ㄧ嚎鏂囨。閾炬帴
 	const onlineUrl = getSourceOnlineUrl(source);
 	if (onlineUrl) {
 		previewVisit.href = onlineUrl;
@@ -835,7 +930,7 @@ function openPreviewModal(source: string, highlightKeyword: string): void {
 		previewVisit.style.display = 'none';
 	}
 
-	// 获取该来源的完整文档内容
+	// 鑾峰彇璇ユ潵婧愮殑瀹屾暣鏂囨。鍐呭
 	const fullContent = engine.getDocumentContent(source);
 	if (!fullContent) {
 		previewBody.innerHTML = `<p style="color: #999;">${eda.sys_I18n.text('Unable to load document content')}</p>`;
@@ -843,10 +938,10 @@ function openPreviewModal(source: string, highlightKeyword: string): void {
 		return;
 	}
 
-	// 先渲染 Markdown（传入 source 用于处理图片链接）
+	// 鍏堟覆鏌?Markdown锛堜紶鍏?source 鐢ㄤ簬澶勭悊鍥剧墖閾炬帴锛?
 	let html = renderMarkdown(fullContent, source);
 
-	// 再对渲染后的 HTML 进行高亮处理
+	// 鍐嶅娓叉煋鍚庣殑 HTML 杩涜楂樹寒澶勭悊
 	if (highlightKeyword && highlightKeyword.trim()) {
 		html = highlightInHtml(html, highlightKeyword);
 	}
@@ -854,7 +949,7 @@ function openPreviewModal(source: string, highlightKeyword: string): void {
 	previewBody.innerHTML = html;
 	previewModal.classList.add('show');
 
-	// 滚动到第一个高亮位置
+	// 婊氬姩鍒扮涓€涓珮浜綅缃?
 	const firstHighlight = previewBody.querySelector('.highlight');
 	if (firstHighlight) {
 		firstHighlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -862,10 +957,10 @@ function openPreviewModal(source: string, highlightKeyword: string): void {
 }
 
 /**
- * 内置知识库域名映射配置表
- * - domain: 对应的在线文档域名（null 表示无在线链接）
- * - pathPrefix: URL 路径前缀
- * - pathSuffix: URL 路径后缀
+ * 鍐呯疆鐭ヨ瘑搴撳煙鍚嶆槧灏勯厤缃〃
+ * - domain: 瀵瑰簲鐨勫湪绾挎枃妗ｅ煙鍚嶏紙null 琛ㄧず鏃犲湪绾块摼鎺ワ級
+ * - pathPrefix: URL 璺緞鍓嶇紑
+ * - pathSuffix: URL 璺緞鍚庣紑
  */
 interface DomainMapping {
 	domain: string | null;
@@ -896,7 +991,7 @@ function getDomainMapping(dirName: string): DomainMapping {
 	return DOMAIN_MAPPINGS[dirName] || DEFAULT_DOMAIN_MAPPING;
 }
 
-/** 根据知识库路径生成在线文档URL */
+/** 鏍规嵁鐭ヨ瘑搴撹矾寰勭敓鎴愬湪绾挎枃妗RL */
 function getSourceOnlineUrl(source: string): string | null {
 	let path = source.replace(/\.md$/, '');
 
@@ -916,19 +1011,19 @@ function getSourceOnlineUrl(source: string): string | null {
 	return `${mapping.domain}${mapping.pathPrefix}${path}${mapping.pathSuffix}`;
 }
 
-/** 在 HTML 内容中进行高亮（保护 HTML 标签） */
+/** 鍦?HTML 鍐呭涓繘琛岄珮浜紙淇濇姢 HTML 鏍囩锛? */
 function highlightInHtml(html: string, keyword: string): string {
 	if (!keyword.trim()) {
 		return html;
 	}
 
-	// 分词并过滤空词
+	// 鍒嗚瘝骞惰繃婊ょ┖璇?
 	const words = keyword.split(/\s+/).filter(w => w.length > 0);
 	if (words.length === 0) {
 		return html;
 	}
 
-	// 使用临时占位符保护 HTML 标签
+	// 浣跨敤涓存椂鍗犱綅绗︿繚鎶?HTML 鏍囩
 	const placeholder = '___HTML_TAG___';
 	const tags: string[] = [];
 	let result = html.replace(/<[^>]+>/g, (match) => {
@@ -936,15 +1031,15 @@ function highlightInHtml(html: string, keyword: string): string {
 		return placeholder;
 	});
 
-	// 在纯文本部分进行高亮
+	// 鍦ㄧ函鏂囨湰閮ㄥ垎杩涜楂樹寒
 	for (const word of words) {
-		// 转义正则特殊字符
+		// 杞箟姝ｅ垯鐗规畩瀛楃
 		const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		const regex = new RegExp(`(${escaped})`, 'gi');
 		result = result.replace(regex, '<span class="highlight">$1</span>');
 	}
 
-	// 恢复 HTML 标签
+	// 鎭㈠ HTML 鏍囩
 	let tagIndex = 0;
 	result = result.replace(new RegExp(placeholder, 'g'), () => {
 		return tags[tagIndex++] || '';
@@ -953,21 +1048,21 @@ function highlightInHtml(html: string, keyword: string): string {
 	return result;
 }
 
-/** 关闭预览弹窗 */
+/** 鍏抽棴棰勮寮圭獥 */
 function closePreviewModal(): void {
 	previewModal.classList.remove('show');
 }
 
 // ============================================================
-// UI 渲染
+// UI 娓叉煋
 // ============================================================
-/** 渲染 Markdown 内容为 HTML */
+/** 娓叉煋 Markdown 鍐呭涓?HTML */
 function renderMarkdown(text: string, sourcePath?: string): string {
-	// 配置 marked 选项
-	// gfm: 启用 GitHub Flavored Markdown（更好的表格支持）
-	// breaks: 不将单个换行符转换为 <br>
-	// mangle: false - 不转义邮箱地址等
-	// headerIds: false - 不自动添加 header id
+	// 閰嶇疆 marked 閫夐」
+	// gfm: 鍚敤 GitHub Flavored Markdown锛堟洿濂界殑琛ㄦ牸鏀寔锛?
+	// breaks: 涓嶅皢鍗曚釜鎹㈣绗﹁浆鎹负 <br>
+	// mangle: false - 涓嶈浆涔夐偖绠卞湴鍧€绛?
+	// headerIds: false - 涓嶈嚜鍔ㄦ坊鍔?header id
 	let html = marked.parse(text, {
 		async: false,
 		gfm: true,
@@ -976,16 +1071,16 @@ function renderMarkdown(text: string, sourcePath?: string): string {
 		headerIds: false,
 	}) as string;
 
-	// 处理图片链接，添加域名前缀
+	// 澶勭悊鍥剧墖閾炬帴锛屾坊鍔犲煙鍚嶅墠缂€
 	if (sourcePath) {
 		const baseUrl = getBaseUrlForSource(sourcePath);
 		if (baseUrl) {
-			// 替换 /storage/images/ 开头的图片链接
+			// 鏇挎崲 /storage/images/ 寮€澶寸殑鍥剧墖閾炬帴
 			html = html.replace(
 				/(<img[^>]+src=["'])\/storage\/images\//gi,
 				`$1${baseUrl}/storage/images/`,
 			);
-			// 替换 markdown 图片语法中的相对路径
+			// 鏇挎崲 markdown 鍥剧墖璇硶涓殑鐩稿璺緞
 			html = html.replace(
 				/(<img[^>]+src=["'])\/cn\//gi,
 				`$1${baseUrl}/cn/`,
@@ -995,7 +1090,7 @@ function renderMarkdown(text: string, sourcePath?: string): string {
 				`$1${baseUrl}/zh-hans/`,
 			);
 		}
-		// 为跨域图片添加 crossorigin 属性以通过 COEP 校验
+		// 涓鸿法鍩熷浘鐗囨坊鍔?crossorigin 灞炴€т互閫氳繃 COEP 鏍￠獙
 		html = html.replace(
 			/<img(?![^>]*crossorigin)/gi,
 			'<img crossorigin="anonymous"',
@@ -1005,7 +1100,7 @@ function renderMarkdown(text: string, sourcePath?: string): string {
 	return html;
 }
 
-/** 根据文档路径获取对应的基础 URL（用于图片域名补全） */
+/** 鏍规嵁鏂囨。璺緞鑾峰彇瀵瑰簲鐨勫熀纭€ URL锛堢敤浜庡浘鐗囧煙鍚嶈ˉ鍏級 */
 function getBaseUrlForSource(source: string): string | null {
 	if (!source.startsWith(`${eda.sys_I18n.text('Built-in Knowledge Base')}/`)) {
 		return null;
@@ -1022,7 +1117,7 @@ function addMessage(role: string, content: string, sources?: string[]): void {
 	const div = document.createElement('div');
 	div.className = `message ${role}`;
 
-	// assistant 消息渲染 Markdown
+	// assistant 娑堟伅娓叉煋 Markdown
 	if (role === 'assistant') {
 		div.innerHTML = renderMarkdown(content);
 	}
@@ -1033,7 +1128,7 @@ function addMessage(role: string, content: string, sources?: string[]): void {
 	if (sources && sources.length > 0) {
 		const srcDiv = document.createElement('div');
 		srcDiv.className = 'sources';
-		srcDiv.textContent = `【Docs】 AI生成内容不一定正确，参考来源: ${sources.join(', ')}`;
+		srcDiv.textContent = eda.sys_I18n.text('AI Generated Sources', undefined, undefined, sources.join(', '));
 		div.appendChild(srcDiv);
 	}
 
@@ -1045,25 +1140,25 @@ function addSystemMessage(text: string): void {
 	addMessage('system', text);
 }
 
-/** 递归渲染树形文件夹 */
+/** 閫掑綊娓叉煋鏍戝舰鏂囦欢澶? */
 function renderNode(node: DocNode, parentArray: DocNode[], container: HTMLElement, depth: number): void {
 	const fileCount = countFiles(node);
 
-	// 文件夹头
+	// 鏂囦欢澶瑰ご
 	const header = document.createElement('div');
 	header.className = 'folder-header';
 	header.style.paddingLeft = `${4 + depth * 12}px`;
-	header.innerHTML = `<span class="folder-toggle">${node.collapsed ? '▶' : '▼'}</span>`
-		+ `<span class="folder-icon">📁</span>`
+	header.innerHTML = `<span class="folder-toggle">${node.collapsed ? '&#9654;' : '&#9660;'}</span>`
+		+ `<span class="folder-icon">&#128193;</span>`
 		+ `<span class="folder-name">${node.name}</span>`
 		+ `<span class="folder-count">${fileCount}</span>`
 		+ `<span class="folder-actions">`
-		+ `<span class="fa-edit" title="重命名">✏️</span>`
-		+ `<span class="fa-del" title="删除文件夹">🗑️</span>`
+		+ `<span class="fa-edit" title="${eda.sys_I18n.text('Rename')}">&#9998;</span>`
+		+ `<span class="fa-del" title="${eda.sys_I18n.text('Delete folder')}">&#128465;</span>`
 		+ `</span>`;
 	container.appendChild(header);
 
-	// 事件绑定（闭包捕获 node 引用）
+	// 浜嬩欢缁戝畾锛堥棴鍖呮崟鑾?node 寮曠敤锛?
 	header.addEventListener('click', (e) => {
 		const target = e.target as HTMLElement;
 		if (target.classList.contains('fa-edit') || target.classList.contains('fa-del')) {
@@ -1082,23 +1177,23 @@ function renderNode(node: DocNode, parentArray: DocNode[], container: HTMLElemen
 		deleteNode(node, parentArray);
 	});
 
-	// 子内容容器
+	// 瀛愬唴瀹瑰鍣?
 	const children = document.createElement('div');
 	children.className = `folder-children${node.collapsed ? ' collapsed' : ''}`;
 
-	// 递归渲染子文件夹
+	// 閫掑綊娓叉煋瀛愭枃浠跺す
 	for (const child of node.children) {
 		renderNode(child, node.children, children, depth + 1);
 	}
 
-	// 渲染文件
+	// 娓叉煋鏂囦欢
 	for (let fli = 0; fli < node.files.length; fli++) {
 		const file = node.files[fli];
 		const item = document.createElement('div');
 		item.className = 'doc-item';
 		item.style.paddingLeft = `${8 + (depth + 1) * 12}px`;
 		item.innerHTML = `<span class="name" title="${file}">${file}</span>`
-			+ `<span class="remove">✕</span>`;
+			+ `<span class="remove">x</span>`;
 		children.appendChild(item);
 
 		const fileIdx = fli;
@@ -1117,7 +1212,7 @@ function renderDocList(): void {
 		renderNode(node, rootNodes, docList, 0);
 	}
 
-	// 统计
+	// 缁熻
 	const totalFiles = countAllFiles();
 	// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
 	docStats.textContent = eda.sys_I18n.text('${1} documents, ${2} chunks', undefined, undefined, String(totalFiles), String(engine.documentCount));
@@ -1137,7 +1232,7 @@ function handleClearKB(): void {
 			rootNodes.length = 0;
 			importCounter = 1;
 			engine.clear();
-			// 清空持久化状态
+			// 娓呯┖鎸佷箙鍖栫姸鎬?
 			kbState = { deletedSources: [], userDocuments: {}, importCounter: 1 };
 			saveKBState(kbState);
 			renderDocList();

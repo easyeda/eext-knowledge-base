@@ -1,9 +1,12 @@
 import type { FeatureExtractionPipeline } from '@huggingface/transformers';
 import type { EmbeddingsParams } from '@langchain/core/embeddings';
+import type { ImportedModel } from './model-store';
 import { env, pipeline } from '@huggingface/transformers';
 import { Embeddings } from '@langchain/core/embeddings';
+import { createImportedModelCache } from './model-store';
+import { PREBUILT_VECTOR_DTYPE, PREBUILT_VECTOR_MODEL_NAME } from './prebuilt-vector-info';
 
-const DEFAULT_MODEL_NAME = 'Xenova/bge-large-zh-v1.5';
+const DEFAULT_MODEL_NAME = PREBUILT_VECTOR_MODEL_NAME;
 
 /** 让出主线程，允许浏览器处理 UI 事件 */
 function yieldToMain(): Promise<void> {
@@ -15,16 +18,30 @@ export class LocalEmbeddings extends Embeddings {
 	private loading: Promise<FeatureExtractionPipeline> | null = null;
 	private onProgress: ((info: string) => void) | null = null;
 	private modelName: string;
+	private importedModel: ImportedModel | undefined;
 
-	constructor(params?: EmbeddingsParams & { onProgress?: (info: string) => void; modelMirror?: string; modelName?: string }) {
+	constructor(params?: EmbeddingsParams & { onProgress?: (info: string) => void; modelMirror?: string; modelName?: string; importedModel?: ImportedModel }) {
 		super(params ?? {});
 		this.onProgress = params?.onProgress ?? null;
-		this.modelName = params?.modelName || DEFAULT_MODEL_NAME;
+		this.importedModel = params?.importedModel;
+		this.modelName = params?.importedModel ? `imported/${params.importedModel.id}` : params?.modelName || DEFAULT_MODEL_NAME;
 
-		env.allowLocalModels = false;
-		env.allowRemoteModels = true;
-		env.remoteHost = params?.modelMirror || 'https://hf-mirror.com';
-		env.remotePathTemplate = '{model}/resolve/{revision}/';
+		if (params?.importedModel) {
+			env.allowLocalModels = true;
+			env.allowRemoteModels = false;
+			env.useBrowserCache = false;
+			env.useCustomCache = true;
+			env.customCache = createImportedModelCache(params.importedModel) as Cache;
+		}
+		else {
+			env.allowLocalModels = false;
+			env.allowRemoteModels = true;
+			env.useBrowserCache = true;
+			env.useCustomCache = false;
+			env.customCache = null;
+			env.remoteHost = params?.modelMirror || 'https://hf-mirror.com';
+			env.remotePathTemplate = '{model}/resolve/{revision}/';
+		}
 	}
 
 	private async getExtractor(): Promise<FeatureExtractionPipeline> {
@@ -40,7 +57,8 @@ export class LocalEmbeddings extends Embeddings {
 		}
 
 		this.loading = pipeline('feature-extraction', this.modelName, {
-			dtype: 'q8',
+			dtype: this.importedModel ? this.importedModel.selectedDtype || 'auto' : PREBUILT_VECTOR_DTYPE,
+			local_files_only: !env.allowRemoteModels,
 			progress_callback: (p: any) => {
 				if (!this.onProgress) {
 					return;

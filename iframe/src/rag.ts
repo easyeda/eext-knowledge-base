@@ -1,4 +1,5 @@
 import type { Document } from '@langchain/core/documents';
+import type { ImportedModel } from './model-store';
 import { MemoryVectorStore } from '@langchain/classic/vectorstores/memory';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
@@ -57,6 +58,10 @@ function repairTableChunk(chunk: string, fullContent: string): string {
 	return lines.join('\n');
 }
 
+function yieldToMain(): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, 0));
+}
+
 const SYSTEM_TEMPLATE = `You are a professional AI assistant. Please answer the user's question based on the following knowledge base content.
 If the knowledge base does not contain relevant information, honestly inform the user that you cannot find the answer in the knowledge base, but you can try to answer based on your own knowledge.
 
@@ -96,7 +101,7 @@ export class RAGEngine {
 	private indexVersion = -1;
 	public onStatus: ((msg: string) => void) | null = null;
 
-	constructor(onStatus?: (msg: string) => void, modelMirror?: string, embeddingModel?: string) {
+	constructor(onStatus?: (msg: string) => void, modelMirror?: string, embeddingModel?: string, importedEmbeddingModel?: ImportedModel) {
 		this.onStatus = onStatus ?? null;
 		this.embeddings = new LocalEmbeddings({
 			onProgress: (msg) => {
@@ -106,6 +111,7 @@ export class RAGEngine {
 			},
 			modelMirror,
 			modelName: embeddingModel,
+			importedModel: importedEmbeddingModel,
 		});
 		this.splitter = new RecursiveCharacterTextSplitter({
 			chunkSize: 450,
@@ -136,6 +142,28 @@ export class RAGEngine {
 		}
 		await this.vectorStore.addVectors(vectors, docs);
 		return entries.length;
+	}
+
+	async embedAndLoadChunks(
+		entries: Array<{ text: string; source: string }>,
+		onProgress?: (done: number, total: number) => void,
+	): Promise<Array<{ text: string; source: string; vector: number[] }>> {
+		const vectorEntries: Array<{ text: string; source: string; vector: number[] }> = [];
+		const batchSize = 8;
+		for (let i = 0; i < entries.length; i += batchSize) {
+			const batch = entries.slice(i, i + batchSize);
+			const vectors = await this.embeddings.embedDocuments(batch.map(entry => entry.text));
+			for (let j = 0; j < batch.length; j++) {
+				vectorEntries.push({
+					text: batch[j].text,
+					source: batch[j].source,
+					vector: vectors[j],
+				});
+			}
+			onProgress?.(Math.min(i + batch.length, entries.length), entries.length);
+			await yieldToMain();
+		}
+		return vectorEntries;
 	}
 
 	/**

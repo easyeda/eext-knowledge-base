@@ -7,10 +7,15 @@ body {
 	overflow: hidden;
 }
 
-#app { display: flex; height: 100vh; }
+#app {
+	display: flex;
+	height: 100vh;
+	min-width: 0;
+}
 
 #sidebar {
 	width: 250px;
+	flex: 0 0 250px;
 	background: #fff;
 	border-right: 1px solid #e0e0e0;
 	padding: 12px;
@@ -153,7 +158,12 @@ body {
 .btn-danger:hover { background: #c0392b; }
 
 /* 主区域 */
-#main { flex: 1; display: flex; flex-direction: column; }
+#main {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
 
 #chat-messages {
 	flex: 1;
@@ -162,19 +172,22 @@ body {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+	min-width: 0;
 }
 
 .message {
 	max-width: 85%;
+	min-width: 0;
 	padding: 8px 12px;
 	border-radius: 8px;
 	font-size: 13px;
 	line-height: 1.5;
 	word-break: break-word;
+	overflow-wrap: anywhere;
 	white-space: pre-wrap;
 }
 .message.user { align-self: flex-end; background: #4a90d9; color: #fff; }
-.message.assistant { align-self: flex-start; background: #fff; border: 1px solid #e0e0e0; color: #333; }
+.message.assistant { align-self: flex-start; width: fit-content; background: #fff; border: 1px solid #e0e0e0; color: #333; }
 .message.system { align-self: center; background: #fff3cd; color: #856404; font-size: 12px; padding: 6px 10px; }
 .message .sources { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.1); font-size: 11px; color: #666; }
 
@@ -204,7 +217,9 @@ body {
 	border: 1px solid #e0e0e0;
 	border-radius: 4px;
 	padding: 8px 10px;
+	white-space: pre;
 	overflow-x: auto;
+	max-width: 100%;
 	margin: 0.5em 0;
 }
 
@@ -231,6 +246,9 @@ body {
 .message.assistant table {
 	border-collapse: collapse;
 	margin: 0.5em 0;
+	display: block;
+	max-width: 100%;
+	overflow-x: auto;
 }
 
 .message.assistant th, .message.assistant td {
@@ -303,6 +321,33 @@ body {
 .rebuild-btn:hover {
 	background: #ffeaa7;
 	border-color: #e0c060;
+}
+
+.vector-progress {
+	padding: 8px 12px;
+	background: #fff8e1;
+	border-bottom: 1px solid #efd37c;
+	color: #6f5400;
+	font-size: 12px;
+}
+
+.vector-progress-text {
+	margin-bottom: 5px;
+	overflow-wrap: anywhere;
+}
+
+.vector-progress-track {
+	height: 6px;
+	background: #f2df9a;
+	border-radius: 999px;
+	overflow: hidden;
+}
+
+.vector-progress-bar {
+	width: 0%;
+	height: 100%;
+	background: #4a90d9;
+	transition: width 0.15s ease;
 }
 
 /* 检索结果样式 */

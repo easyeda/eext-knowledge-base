@@ -1,4 +1,5 @@
 // @ts-expect-error esbuild text loader
+import type { ImportedModel } from './model-store';
 import workerCode from '../../iframe/local-llm-worker.bundle.txt';
 
 export interface LocalLLMOptions {
@@ -6,6 +7,7 @@ export interface LocalLLMOptions {
 	modelMirror?: string;
 	modelName?: string;
 	dtype?: string;
+	importedModel?: ImportedModel;
 }
 
 export class LocalLLM {
@@ -14,6 +16,7 @@ export class LocalLLM {
 	private modelMirror: string;
 	private modelName: string;
 	private dtype: string;
+	private importedModel?: ImportedModel;
 	private initPromise: Promise<void> | null = null;
 
 	constructor(opts?: LocalLLMOptions) {
@@ -21,6 +24,7 @@ export class LocalLLM {
 		this.modelMirror = opts?.modelMirror || 'https://hf-mirror.com';
 		this.modelName = opts?.modelName || 'onnx-community/Qwen2.5-0.5B-Instruct';
 		this.dtype = opts?.dtype || 'q8';
+		this.importedModel = opts?.importedModel;
 	}
 
 	get isLoaded(): boolean {
@@ -52,7 +56,7 @@ export class LocalLLM {
 
 			this.worker.postMessage({
 				type: 'init',
-				payload: { modelMirror: this.modelMirror, modelName: this.modelName, dtype: this.dtype },
+				payload: { modelMirror: this.modelMirror, modelName: this.modelName, dtype: this.dtype, importedModel: this.importedModel },
 			});
 		});
 

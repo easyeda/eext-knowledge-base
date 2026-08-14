@@ -1,5 +1,7 @@
 import type { TextGenerationPipeline } from '@huggingface/transformers';
+import type { ImportedModel } from './model-store';
 import { env, pipeline, TextStreamer } from '@huggingface/transformers';
+import { createImportedModelCache } from './model-store';
 
 const DEFAULT_MODEL_NAME = 'onnx-community/Qwen2.5-0.5B-Instruct';
 
@@ -23,18 +25,32 @@ globalThis.onmessage = async (e: MessageEvent) => {
 
 	if (type === 'init') {
 		try {
-			const modelName = payload.modelName || DEFAULT_MODEL_NAME;
-			const dtype = payload.dtype || 'q8';
+			const importedModel = payload.importedModel as ImportedModel | undefined;
+			const modelName = importedModel ? `imported/${importedModel.id}` : payload.modelName || DEFAULT_MODEL_NAME;
+			const dtype = importedModel ? importedModel.selectedDtype || 'auto' : payload.dtype || 'q8';
 
-			env.allowLocalModels = false;
-			env.allowRemoteModels = true;
-			env.remoteHost = payload.modelMirror || 'https://hf-mirror.com';
-			env.remotePathTemplate = '{model}/resolve/{revision}/';
+			if (importedModel) {
+				env.allowLocalModels = true;
+				env.allowRemoteModels = false;
+				env.useBrowserCache = false;
+				env.useCustomCache = true;
+				env.customCache = createImportedModelCache(importedModel) as Cache;
+			}
+			else {
+				env.allowLocalModels = false;
+				env.allowRemoteModels = true;
+				env.useBrowserCache = true;
+				env.useCustomCache = false;
+				env.customCache = null;
+				env.remoteHost = payload.modelMirror || 'https://hf-mirror.com';
+				env.remotePathTemplate = '{model}/resolve/{revision}/';
+			}
 
 			globalThis.postMessage({ type: 'progress', message: 'Loading local AI model...' });
 
 			generator = await pipeline('text-generation', modelName, {
 				dtype: dtype as any,
+				local_files_only: !!importedModel,
 				progress_callback: (p: any) => {
 					if (p.status === 'ready') {
 						globalThis.postMessage({ type: 'progress', message: 'Local AI model loaded' });

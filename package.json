@@ -9,11 +9,13 @@
 		"node": ">=20.17.0"
 	},
 	"scripts": {
-		"compile": "rimraf ./dist/ && ts-node ./config/esbuild.prod.ts",
-		"compile:iframe": "ts-node ./iframe/prebuild-vectors.ts && ts-node ./iframe/build.ts",
+		"compile:extension": "rimraf ./dist/ && ts-node ./config/esbuild.prod.ts",
+		"prebuild:vectors": "ts-node ./iframe/prebuild-vectors.ts",
+		"compile:iframe": "npm run prebuild:vectors && ts-node ./iframe/build.ts",
+		"compile": "npm run compile:iframe && npm run compile:extension",
 		"lint": "eslint",
 		"fix": "eslint --fix",
-		"build": "npm run compile:iframe && npm run compile && ts-node ./build/packaged.ts"
+		"build": "npm run compile && ts-node ./build/packaged.ts"
 	},
 	"dependencies": {
 		"marked": "^18.0.3"
