@@ -87,9 +87,17 @@ export class LocalEmbeddings extends Embeddings {
 				this.onProgress(eda.sys_I18n.text('Embedding model ready'));
 			}
 			return ext;
+		}).catch((error) => {
+			this.loading = null;
+			throw error;
 		});
 
 		return this.loading;
+	}
+
+	async prepare(): Promise<void> {
+		const extractor = await this.getExtractor();
+		await extractor(['ready'], { pooling: 'mean', normalize: true, truncation: true } as any);
 	}
 
 	async embedDocuments(documents: string[]): Promise<number[][]> {

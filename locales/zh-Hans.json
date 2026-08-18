@@ -157,5 +157,10 @@
   "Embedding model selected. Prebuilt vectors stay enabled; this model will embed queries and imported docs.": "已选中 Embedding 模型。预构建向量保持开启；该模型将用于查询和新导入文档的向量化。",
   "AI Generated Sources": "【Docs】AI 生成内容不一定正确，参考来源：${1}",
   "Local AI Generated Sources": "【Docs】本地 AI 生成内容仅供参考，参考来源：${1}",
+  "Loading knowledge base...": "正在加载知识库...",
+  "Preparing embedding model...": "正在准备向量模型...",
+  "Knowledge base ready": "知识库已就绪",
+  "Loading user documents: ${1}/${2}": "正在加载用户文档：${1}/${2}",
+  "Failed to initialize the knowledge base. The embedding model will retry on the next query.": "知识库初始化失败，向量模型将在下次查询时重试。",
   "Failed to read file: ${1}": "【WARN】读取文件失败：${1}"
 }

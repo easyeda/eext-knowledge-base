@@ -123,6 +123,10 @@ export class RAGEngine {
 	 * 加载预构建向量（bge-large，维度一致，直接注入 store）
 	 */
 	async loadPrebuiltVectors(entries: Array<{ text: string; source: string; vector: number[] }>): Promise<number> {
+		return this.loadVectorEntries(entries, true);
+	}
+
+	async loadVectorEntries(entries: Array<{ text: string; source: string; vector: number[] }>, prebuilt = false): Promise<number> {
 		if (entries.length === 0) {
 			return 0;
 		}
@@ -134,7 +138,9 @@ export class RAGEngine {
 
 		this.allDocs.push(...docs);
 		this.allVectors.push(...vectors);
-		this.prebuiltCount = entries.length;
+		if (prebuilt) {
+			this.prebuiltCount = entries.length;
+		}
 		this.docVersion++;
 
 		if (!this.vectorStore) {
@@ -142,6 +148,10 @@ export class RAGEngine {
 		}
 		await this.vectorStore.addVectors(vectors, docs);
 		return entries.length;
+	}
+
+	async prepareEmbeddings(): Promise<void> {
+		await this.embeddings.prepare();
 	}
 
 	async embedAndLoadChunks(
@@ -169,7 +179,7 @@ export class RAGEngine {
 	/**
 	 * 用户上传文档（浏览器端 bge-large 实时向量化）
 	 */
-	async addDocument(name: string, content: string): Promise<number> {
+	async addDocumentWithVectors(name: string, content: string): Promise<Array<{ text: string; source: string; vector: number[] }>> {
 		const rawDocs = await this.splitter.createDocuments(
 			[content],
 			[{ source: name }],
@@ -193,7 +203,15 @@ export class RAGEngine {
 			this.vectorStore = new MemoryVectorStore(this.embeddings);
 		}
 		await this.vectorStore.addVectors(vectors, docs);
-		return docs.length;
+		return docs.map((doc, index) => ({
+			text: doc.pageContent,
+			source: `${doc.metadata.source}`,
+			vector: vectors[index],
+		}));
+	}
+
+	async addDocument(name: string, content: string): Promise<number> {
+		return (await this.addDocumentWithVectors(name, content)).length;
 	}
 
 	async removeDocument(name: string): Promise<void> {

@@ -157,5 +157,10 @@
   "Embedding model selected. Prebuilt vectors stay enabled; this model will embed queries and imported docs.": "Embedding model selected. Prebuilt vectors stay enabled; this model will embed queries and imported docs.",
   "AI Generated Sources": "[Docs] AI-generated content may be inaccurate. Sources: ${1}",
   "Local AI Generated Sources": "[Docs] Local AI-generated content is for reference only. Sources: ${1}",
+  "Loading knowledge base...": "Loading knowledge base...",
+  "Preparing embedding model...": "Preparing embedding model...",
+  "Knowledge base ready": "Knowledge base ready",
+  "Loading user documents: ${1}/${2}": "Loading user documents: ${1}/${2}",
+  "Failed to initialize the knowledge base. The embedding model will retry on the next query.": "Failed to initialize the knowledge base. The embedding model will retry on the next query.",
   "Failed to read file: ${1}": "[WARN] Failed to read file: ${1}"
 }

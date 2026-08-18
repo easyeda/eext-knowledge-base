@@ -1,10 +1,12 @@
+import type { VectorEntry } from './builtin-docs';
 import type { RAGConfig } from './rag';
+import type { UserVectorCache } from './vector-cache';
 import { marked } from 'marked';
 import { builtinVectors, PREBUILT_VECTOR_MODEL_NAME } from './builtin-docs';
 import { LocalLLM } from './local-llm';
 import { getImportedModel } from './model-store';
 import { RAGEngine } from './rag';
-import { deleteVectorCache, importedVectorCacheKey, readVectorCache, remoteVectorCacheKey, writeVectorCache } from './vector-cache';
+import { deleteVectorCache, hashVectorDocument, importedVectorCacheKey, readUserVectorCache, readVectorCache, remoteVectorCacheKey, userVectorCacheKey, writeUserVectorCache, writeVectorCache } from './vector-cache';
 
 declare const eda: any;
 
@@ -172,6 +174,12 @@ const config = loadConfig();
 const usePrebuiltVectors = config.usePrebuiltVectors !== false;
 const importedEmbeddingModel = config.localImportedModelsEnabled && config.embeddingModelSource === 'imported' ? getImportedModel(config.embeddingModelId) : undefined;
 const embeddingModelName = importedEmbeddingModel ? '' : usePrebuiltVectors ? PREBUILT_VECTOR_MODEL_NAME : config.embeddingModel;
+const forceVectorRebuild = !!config.embeddingVectorRebuildToken;
+const activeVectorModelKey = importedEmbeddingModel
+	? importedVectorCacheKey(importedEmbeddingModel.id, importedEmbeddingModel.selectedDtype)
+	: remoteVectorCacheKey(embeddingModelName || PREBUILT_VECTOR_MODEL_NAME);
+const userDocumentsVectorCacheKey = userVectorCacheKey(activeVectorModelKey);
+let userVectorCache: UserVectorCache = { version: 1, documents: {} };
 const engine = new RAGEngine((msg) => {
 	addSystemMessage(`【Think】${msg}`);
 }, config.modelMirror, embeddingModelName, importedEmbeddingModel);
@@ -294,8 +302,7 @@ if (!config.apiKey || !config.model || !config.baseURL) {
 }
 
 // 鍏堝姞杞界敤鎴锋枃妗ｏ紙宸插湪鍐呭瓨涓級锛屽啀鍔犺浇鍐呯疆鐭ヨ瘑搴?
-loadUserDocuments();
-loadBuiltinDocs();
+const initializationPromise = initializeKnowledgeBase();
 
 fileInput.addEventListener('change', handleFileUpload);
 sendBtn.addEventListener('click', handleSend);
@@ -343,6 +350,29 @@ document.addEventListener('keydown', (e) => {
 // ============================================================
 // 鍐呯疆鐭ヨ瘑搴?
 // ============================================================
+async function initializeKnowledgeBase(): Promise<void> {
+	sendBtn.disabled = true;
+	setVectorProgress(eda.sys_I18n.text('Loading knowledge base...'));
+	try {
+		await loadBuiltinDocs();
+		await loadUserDocuments();
+		if (engine.documentCount > 0) {
+			setVectorProgress(eda.sys_I18n.text('Preparing embedding model...'));
+			await engine.prepareEmbeddings();
+		}
+		acknowledgeVectorRebuildRequest();
+		setVectorProgress(eda.sys_I18n.text('Knowledge base ready'), 1, 1);
+	}
+	catch (error) {
+		console.error('[AI-Assistant] Failed to initialize knowledge base:', error);
+		addSystemMessage(eda.sys_I18n.text('Failed to initialize the knowledge base. The embedding model will retry on the next query.'));
+	}
+	finally {
+		setTimeout(hideVectorProgress, 1200);
+		sendBtn.disabled = false;
+	}
+}
+
 async function loadBuiltinDocs(): Promise<void> {
 	if (builtinVectors.length === 0) {
 		return;
@@ -356,11 +386,10 @@ async function loadBuiltinDocs(): Promise<void> {
 			let count: number;
 			if (usePrebuiltVectors) {
 				count = await engine.loadPrebuiltVectors(filteredVectors);
-				acknowledgeVectorRebuildRequest();
 			}
 			else if (importedEmbeddingModel) {
 				const cacheKey = importedVectorCacheKey(importedEmbeddingModel.id, importedEmbeddingModel.selectedDtype);
-				const forceRebuild = !!config.embeddingVectorRebuildToken;
+				const forceRebuild = forceVectorRebuild;
 				if (forceRebuild) {
 					await deleteVectorCache(cacheKey);
 				}
@@ -378,9 +407,6 @@ async function loadBuiltinDocs(): Promise<void> {
 				}
 				setVectorProgress(`Loading vectors for ${importedEmbeddingModel.name}...`, cachedVectors.length, cachedVectors.length);
 				await engine.loadPrebuiltVectors(cachedVectors);
-				if (forceRebuild) {
-					acknowledgeVectorRebuildRequest();
-				}
 				count = cachedVectors.length;
 				setTimeout(hideVectorProgress, 1200);
 			}
@@ -432,7 +458,15 @@ async function loadBuiltinDocs(): Promise<void> {
 // ============================================================
 async function loadUserDocuments(): Promise<void> {
 	const entries = Object.entries(kbState.userDocuments);
+	const cached = forceVectorRebuild ? null : await readUserVectorCache(userDocumentsVectorCacheKey);
+	const nextCache: UserVectorCache = { version: 1, documents: {} };
+	let cacheChanged = !cached || forceVectorRebuild || Object.keys(cached.documents).length !== entries.length;
+	userVectorCache = cached ?? nextCache;
 	if (entries.length === 0) {
+		if (cached && Object.keys(cached.documents).length > 0) {
+			userVectorCache = nextCache;
+			await persistUserVectorCache();
+		}
 		return;
 	}
 
@@ -449,6 +483,7 @@ async function loadUserDocuments(): Promise<void> {
 	}
 
 	// 鍔犺浇姣忎釜鏂囦欢澶?
+	let loaded = 0;
 	for (const [folderPath, files] of folderMap) {
 		const folderSegments = folderPath.split('/').filter(Boolean);
 		const folder = ensureFolder(rootNodes, '', folderSegments);
@@ -456,7 +491,21 @@ async function loadUserDocuments(): Promise<void> {
 		for (const { file, content } of files) {
 			try {
 				const sourceKey = getSourceKey(folderPath, file);
-				await engine.addDocument(sourceKey, content);
+				const contentHash = await hashVectorDocument(content);
+				const cachedDocument = cached?.documents[sourceKey];
+				let vectors: VectorEntry[];
+				if (cachedDocument?.contentHash === contentHash && cachedDocument.vectors.length > 0) {
+					vectors = cachedDocument.vectors;
+					await engine.loadVectorEntries(vectors);
+				}
+				else {
+					vectors = await engine.addDocumentWithVectors(sourceKey, content);
+					cacheChanged = true;
+				}
+				nextCache.documents[sourceKey] = { contentHash, vectors };
+				loaded++;
+				// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
+				setVectorProgress(eda.sys_I18n.text('Loading user documents: ${1}/${2}', undefined, undefined, String(loaded), String(entries.length)), loaded, entries.length);
 				if (!folder.files.includes(file)) {
 					folder.files.push(file);
 				}
@@ -468,8 +517,28 @@ async function loadUserDocuments(): Promise<void> {
 		}
 	}
 
+	userVectorCache = nextCache;
+	if (cacheChanged) {
+		await persistUserVectorCache();
+	}
 	renderDocList();
 	importCounter = kbState.importCounter;
+}
+
+async function cacheUserDocumentVectors(sourceKey: string, content: string, vectors: VectorEntry[]): Promise<void> {
+	userVectorCache.documents[sourceKey] = {
+		contentHash: await hashVectorDocument(content),
+		vectors,
+	};
+}
+
+async function persistUserVectorCache(): Promise<void> {
+	try {
+		await writeUserVectorCache(userDocumentsVectorCacheKey, userVectorCache);
+	}
+	catch (error) {
+		console.error('[AI-Assistant] Failed to persist user document vectors:', error);
+	}
 }
 
 // ============================================================
@@ -481,24 +550,31 @@ async function handleFileUpload(e: Event): Promise<void> {
 	if (!files.length) {
 		return;
 	}
+	await initializationPromise;
 
 	const folderName = `瀵煎叆 ${importCounter++}`;
 	const folder: DocNode = { name: folderName, path: folderName, collapsed: false, children: [], files: [] };
 
 	let totalChunks = 0;
+	let vectorCacheChanged = false;
 	for (const file of files) {
 		try {
 			const text = await file.text();
 			const sourceKey = getSourceKey(folderName, file.name);
-			const chunks = await engine.addDocument(sourceKey, text);
+			const vectors = await engine.addDocumentWithVectors(sourceKey, text);
 			folder.files.push(file.name);
-			totalChunks += chunks;
+			totalChunks += vectors.length;
 			// 鎸佷箙鍖栫敤鎴锋枃妗?
 			saveUserDocument(sourceKey, text);
+			await cacheUserDocumentVectors(sourceKey, text, vectors);
+			vectorCacheChanged = true;
 		}
 		catch {
 			addSystemMessage(`璇诲彇鏂囦欢澶辫触: ${file.name}`);
 		}
+	}
+	if (vectorCacheChanged) {
+		await persistUserVectorCache();
 	}
 
 	if (folder.files.length > 0) {
@@ -553,9 +629,27 @@ function renameNode(node: DocNode, headerEl: HTMLElement): void {
 			updateNodePaths(node, newPath);
 			// 鏇存柊 engine 涓殑 source keys
 			const newKeys = collectSourceKeys(node);
+			let userDocumentsChanged = false;
 			for (let i = 0; i < oldKeys.length; i++) {
 				await engine.renameSource(oldKeys[i], newKeys[i]);
+				if (Object.prototype.hasOwnProperty.call(kbState.userDocuments, oldKeys[i])) {
+					kbState.userDocuments[newKeys[i]] = kbState.userDocuments[oldKeys[i]];
+					delete kbState.userDocuments[oldKeys[i]];
+					userDocumentsChanged = true;
+				}
+				const cachedDocument = userVectorCache.documents[oldKeys[i]];
+				if (cachedDocument) {
+					userVectorCache.documents[newKeys[i]] = {
+						...cachedDocument,
+						vectors: cachedDocument.vectors.map(vector => ({ ...vector, source: newKeys[i] })),
+					};
+					delete userVectorCache.documents[oldKeys[i]];
+				}
 			}
+			if (userDocumentsChanged) {
+				saveKBState(kbState);
+			}
+			await persistUserVectorCache();
 		}
 		renderDocList();
 	};
@@ -599,13 +693,15 @@ function deleteNode(node: DocNode, parentArray: DocNode[]): void {
 			}
 			// 鏍囪涓哄凡鍒犻櫎锛堢敤浜庡唴缃煡璇嗗簱锛夋垨浠庣敤鎴锋枃妗ｄ腑绉婚櫎
 			for (const key of sourceKeys) {
-				if (kbState.userDocuments[key]) {
+				if (Object.prototype.hasOwnProperty.call(kbState.userDocuments, key)) {
 					removeUserDocument(key);
+					delete userVectorCache.documents[key];
 				}
 				else {
 					markSourceDeleted(key);
 				}
 			}
+			await persistUserVectorCache();
 			const idx = parentArray.indexOf(node);
 			if (idx >= 0) {
 				parentArray.splice(idx, 1);
@@ -633,8 +729,10 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 			const sourceKey = getSourceKey(node.path, file);
 			await engine.removeDocuments([sourceKey]);
 			// 鏍囪涓哄凡鍒犻櫎锛堢敤浜庡唴缃煡璇嗗簱锛夋垨浠庣敤鎴锋枃妗ｄ腑绉婚櫎
-			if (kbState.userDocuments[sourceKey]) {
+			if (Object.prototype.hasOwnProperty.call(kbState.userDocuments, sourceKey)) {
 				removeUserDocument(sourceKey);
+				delete userVectorCache.documents[sourceKey];
+				await persistUserVectorCache();
 			}
 			else {
 				markSourceDeleted(sourceKey);
@@ -680,6 +778,7 @@ async function handleSend(): Promise<void> {
 	if (!question) {
 		return;
 	}
+	await initializationPromise;
 
 	userInput.value = '';
 	sendBtn.disabled = true;
@@ -1225,7 +1324,7 @@ function handleClearKB(): void {
 		eda.sys_I18n.text('Confirm Clear'),
 		eda.sys_I18n.text('Clear'),
 		eda.sys_I18n.text('Cancel'),
-		(confirmed: boolean) => {
+		async (confirmed: boolean) => {
 			if (!confirmed) {
 				return;
 			}
@@ -1235,6 +1334,8 @@ function handleClearKB(): void {
 			// 娓呯┖鎸佷箙鍖栫姸鎬?
 			kbState = { deletedSources: [], userDocuments: {}, importCounter: 1 };
 			saveKBState(kbState);
+			userVectorCache = { version: 1, documents: {} };
+			await deleteVectorCache(userDocumentsVectorCacheKey);
 			renderDocList();
 			chatMessages.innerHTML = '';
 			addSystemMessage(eda.sys_I18n.text('Knowledge base has been cleared.'));
