@@ -13,7 +13,6 @@ Import Markdown documents to build a knowledge base. When users ask questions, t
 **Recommended to use this extension in the EasyEDA Pro client**
 **Local AI requires good computer performance and memory. It is recommended to use 1.5B or larger models for a better experience**
 
-
 ## Features
 ### ✅ Support connecting to general model API, with local vector model enabling intelligent Q&A based on knowledge base content
 
@@ -48,3 +47,7 @@ Import Markdown documents to build a knowledge base. When users ask questions, t
 - [Transformers.js](https://github.com/huggingface/transformers.js) — Browser-side model inference (Apache-2.0)
 - [bge-large-zh-v1.5](https://huggingface.co/BAAI/bge-large-zh-v1.5) — Chinese embedding model (MIT)
 - [HF-Mirror](https://hf-mirror.com/) — Hugging Face mirror for China
+
+### CPU / GPU inference
+
+As in eda-color, Auto prefers WebGPU and retries once on CPU in a fresh Worker on failure. Forced GPU reports errors without fallback; CPU uses WASM (up to 8 threads only when cross-origin isolated). Save and reopen the assistant. Local chat, embeddings, and import validation use dedicated Workers and packaged JSEP runtime assets, without CDN runtime downloads. Models still require downloading or importing. Cancellation and failures after streamed text do not retry. External API models use server-side device settings.

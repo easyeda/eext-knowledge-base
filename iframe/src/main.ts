@@ -3,6 +3,7 @@ import type { RAGConfig } from './rag';
 import type { UserVectorCache } from './vector-cache';
 import { marked } from 'marked';
 import { builtinVectors, PREBUILT_VECTOR_MODEL_NAME } from './builtin-docs';
+import { normalizeDevice } from './inference-device';
 import { LocalLLM } from './local-llm';
 import { getImportedModel } from './model-store';
 import { RAGEngine } from './rag';
@@ -57,8 +58,10 @@ function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: strin
 				model: obj.model || '',
 				baseURL: obj.baseURL || '',
 				modelMirror: obj.modelMirror || '',
+				customModelMirror: obj.customModelMirror || '',
 				embeddingModel: obj.embeddingModel || '',
 				localModel: obj.localModel || '',
+				localDevice: normalizeDevice(obj.localDevice),
 				localDtype: obj.localDtype || '',
 				localImportedModelsEnabled: !!obj.localImportedModelsEnabled,
 				usePrebuiltVectors: obj.usePrebuiltVectors !== false,
@@ -182,7 +185,7 @@ const userDocumentsVectorCacheKey = userVectorCacheKey(activeVectorModelKey);
 let userVectorCache: UserVectorCache = { version: 1, documents: {} };
 const engine = new RAGEngine((msg) => {
 	addSystemMessage(`【Think】${msg}`);
-}, config.modelMirror, embeddingModelName, importedEmbeddingModel);
+}, config.modelMirror, embeddingModelName, importedEmbeddingModel, config.localDevice);
 
 // ============================================================
 // DOM
@@ -935,6 +938,7 @@ async function handleLocalQuery(question: string, statusDiv: HTMLElement): Promi
 
 	if (!localLLM) {
 		localLLM = new LocalLLM({
+			device: cfg.localDevice,
 			onProgress: (msg) => {
 				statusDiv.textContent = `[Model] ${msg}`;
 				chatMessages.scrollTop = chatMessages.scrollHeight;

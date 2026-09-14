@@ -1,4 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import esbuild from 'esbuild';
+
+const ortDist = dirname(require.resolve('onnxruntime-web'));
+const ortDefines = {
+	__ORT_JSEP_MJS_SOURCE__: JSON.stringify(readFileSync(join(ortDist, 'ort-wasm-simd-threaded.jsep.mjs'), 'utf8')),
+	__ORT_JSEP_WASM_BASE64__: JSON.stringify(readFileSync(join(ortDist, 'ort-wasm-simd-threaded.jsep.wasm')).toString('base64')),
+};
 
 // 1. Build worker first
 esbuild.buildSync({
@@ -11,6 +19,7 @@ esbuild.buildSync({
 	minify: false,
 	sourcemap: false,
 	define: {
+		...ortDefines,
 		'process.env.NODE_ENV': '"production"',
 	},
 });
@@ -20,6 +29,7 @@ esbuild.buildSync({
 	entryPoints: ['iframe/src/model-manager.ts'],
 	bundle: true,
 	outfile: 'iframe/model-manager.js',
+	loader: { '.txt': 'text' },
 	format: 'iife',
 	platform: 'browser',
 	target: 'es2020',

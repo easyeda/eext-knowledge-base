@@ -1,7 +1,7 @@
-import type { FeatureExtractionPipeline, TextGenerationPipeline } from '@huggingface/transformers';
 import type { ImportedModel, ImportedModelKind } from './model-store';
-import { env, pipeline } from '@huggingface/transformers';
-import { commitImportedModel, createImportedModelCache, deleteImportedModel, formatBytes, listImportedModels, stageImportedModel, updateImportedModel } from './model-store';
+import { InferenceClient } from './inference-client';
+import { normalizeDevice } from './inference-device';
+import { commitImportedModel, deleteImportedModel, formatBytes, listImportedModels, stageImportedModel, updateImportedModel } from './model-store';
 import { PREBUILT_VECTOR_DTYPE, PREBUILT_VECTOR_MODEL_NAME } from './prebuilt-vector-info';
 import { deleteVectorCache, importedVectorCacheKey } from './vector-cache';
 
@@ -104,23 +104,12 @@ function selectedFiles(): File[] {
 }
 
 async function validateModel(model: ImportedModel): Promise<void> {
-	env.allowLocalModels = true;
-	env.allowRemoteModels = false;
-	env.useBrowserCache = false;
-	env.useCustomCache = true;
-	env.customCache = createImportedModelCache(model) as Cache;
-	const modelPath = `imported/${model.id}`;
-	const dtype = model.selectedDtype || 'auto';
 	setStatus(t('Validating model by loading it offline...'));
-	if (model.kind === 'text-generation') {
-		const instance = await pipeline('text-generation', modelPath, { dtype, local_files_only: true }) as TextGenerationPipeline;
-		await instance.dispose();
+	const client = new InferenceClient({ kind: model.kind, importedModel: model, device: normalizeDevice(readConfig().localDevice), onProgress: message => setStatus(t(message)) });
+	try {
+		await client.run();
 	}
-	else {
-		const instance = await pipeline('feature-extraction', modelPath, { dtype, local_files_only: true }) as FeatureExtractionPipeline;
-		await instance(['model check'], { pooling: 'mean', normalize: true, truncation: true } as any);
-		await instance.dispose();
-	}
+	finally { client.dispose(); }
 }
 
 function sourceLabel(kind: ImportedModelKind): string {
