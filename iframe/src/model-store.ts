@@ -232,21 +232,60 @@ export async function stageImportedModel(
 	};
 }
 
-export function createImportedModelCache(model: ImportedModel): Pick<Cache, 'match' | 'put'> {
+export function createImportedModelCache(model: ImportedModel): Pick<Cache, 'match' | 'put'> & { prepare: () => Promise<void> } {
+	let index: Promise<{ cache: Cache; keys: Map<string, Request> }> | undefined;
+	const failure = (message: string) => Object.assign(new Error(`Imported model cache: ${message} [${model.name}, ${model.id}]`), { name: 'ModelCacheError' });
+	const loadIndex = () => index ??= (async () => {
+		try {
+			if (!await caches.has(modelCacheName(model.id)))
+				throw failure('cache is missing; import this model again');
+			const cache = await caches.open(modelCacheName(model.id));
+			const keys = new Map<string, Request>();
+			const prefix = `${CACHE_PATH}/${model.id}/`;
+			for (const request of await cache.keys()) {
+				const pathname = decodeURIComponent(new URL(request.url).pathname);
+				if (pathname.startsWith(prefix))
+					keys.set(normalizePath(pathname.slice(prefix.length)), request);
+			}
+			for (const path of model.files) {
+				if (!keys.has(normalizePath(path)))
+					throw failure(`cached file is missing: ${path}; import this model again`);
+			}
+			return { cache, keys };
+		}
+		catch (error) {
+			if ((error as Error).name === 'ModelCacheError')
+				throw error;
+			throw failure(`cannot access Cache Storage: ${(error as Error).message}`);
+		}
+	})();
 	return {
+		async prepare(): Promise<void> {
+			const { cache, keys } = await loadIndex();
+			const key = keys.get('config.json');
+			const config = key && await cache.match(key);
+			if (!config)
+				throw failure('config.json is missing; import this model again');
+			try {
+				await config.json();
+			}
+			catch { throw failure('config.json is not valid JSON'); }
+		},
 		async match(request: RequestInfo | URL): Promise<Response | undefined> {
 			const raw = typeof request === 'string' ? request : request instanceof URL ? request.href : request.url;
 			const decoded = decodeURIComponent(raw.split('?')[0]);
-			const path = model.files.find(file => decoded.endsWith(`/${file}`) || decoded === file);
-			if (!path) {
+			const path = [...model.files].sort((a, b) => b.length - a.length).find(file => decoded.endsWith(`/${file}`) || decoded === file);
+			if (!path)
 				return undefined;
-			}
-			const cache = await caches.open(modelCacheName(model.id));
-			return cache.match(modelRequest(model.id, path));
+			const { cache, keys } = await loadIndex();
+			const key = keys.get(normalizePath(path));
+			// Use the persisted key, not an origin reconstructed inside a Blob Worker.
+			const response = key && await cache.match(key);
+			if (!response)
+				throw failure(`cached file is missing: ${path}`);
+			return response;
 		},
-		async put(): Promise<void> {
-			throw new Error('Imported model cache is read-only.');
-		},
+		async put(): Promise<void> { throw failure('cache is read-only'); },
 	};
 }
 

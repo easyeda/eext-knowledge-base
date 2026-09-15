@@ -1,121 +1,120 @@
-import type { TextGenerationPipeline } from '@huggingface/transformers';
+import type { DataType, FeatureExtractionPipeline, TextGenerationPipeline } from '@huggingface/transformers';
+import type { ExecutionDevice } from './inference-device';
 import type { ImportedModel } from './model-store';
 import { env, pipeline, TextStreamer } from '@huggingface/transformers';
+import { selectDevice } from './inference-device';
+import { fitLocalPrompt, LOCAL_OUTPUT_TOKENS, localInputTokens } from './local-prompt';
 import { createImportedModelCache } from './model-store';
+import { setupOrtRuntime } from './ort-runtime';
+import { remoteModelDtype } from './remote-models';
 
-const DEFAULT_MODEL_NAME = 'onnx-community/Qwen2.5-0.5B-Instruct';
-
-// 尝试启用多线程
-const numCores = navigator.hardwareConcurrency || 4;
-(env as any).backends ??= {};
-(env as any).backends.onnx ??= {};
-(env as any).backends.onnx.wasm ??= {};
-(env as any).backends.onnx.wasm.numThreads = numCores;
-
-let generator: TextGenerationPipeline | null = null;
-let aborted = false;
-
-globalThis.onmessage = async (e: MessageEvent) => {
-	const { type, payload } = e.data;
-
-	if (type === 'abort') {
-		aborted = true;
-		return;
+let generator: TextGenerationPipeline | undefined;
+let extractor: FeatureExtractionPipeline | undefined;
+let backend: ExecutionDevice | undefined;
+const fetchResource = globalThis.fetch.bind(globalThis);
+const fetchRemoteModel: typeof env.fetch = async (input, init) => {
+	try {
+		return await fetchResource(input, init);
 	}
+	catch (cause) {
+		const url = new URL(String(input));
+		url.username = '';
+		url.password = '';
+		url.search = '';
+		url.hash = '';
+		const error = new Error(`Model download failed: ${url.href}. Check the mirror/network, or select another model mirror in Settings and reopen the assistant. (${(cause as Error).message})`);
+		error.name = 'ModelDownloadError';
+		throw error;
+	}
+};
 
-	if (type === 'init') {
-		try {
-			const importedModel = payload.importedModel as ImportedModel | undefined;
-			const modelName = importedModel ? `imported/${importedModel.id}` : payload.modelName || DEFAULT_MODEL_NAME;
-			const dtype = importedModel ? importedModel.selectedDtype || 'auto' : payload.dtype || 'q8';
-
-			if (importedModel) {
-				env.allowLocalModels = true;
-				env.allowRemoteModels = false;
-				env.useBrowserCache = false;
-				env.useCustomCache = true;
-				env.customCache = createImportedModelCache(importedModel) as Cache;
+globalThis.onmessage = async (event: MessageEvent) => {
+	const { id, type, payload = {} } = event.data;
+	const post = (type: string, data: Record<string, unknown> = {}) => globalThis.postMessage({ id, type, backend, ...data });
+	try {
+		if (type === 'init') {
+			backend = await selectDevice(payload.device);
+			post('progress', { message: backend === 'webgpu' ? 'Using GPU (WebGPU)' : 'Using CPU (WASM)' });
+			setupOrtRuntime();
+			const imported = payload.importedModel as ImportedModel | undefined;
+			env.allowLocalModels = !!imported;
+			env.allowRemoteModels = !imported;
+			env.useBrowserCache = !imported;
+			env.useCustomCache = !!imported;
+			if (imported) {
+				const cache = createImportedModelCache(imported);
+				await cache.prepare();
+				env.customCache = cache as unknown as Cache;
+				// Local fallback requests must also resolve from Cache Storage, never the network.
+				env.fetch = async input => await cache.match(input) || new Response(null, { status: 404 });
 			}
 			else {
-				env.allowLocalModels = false;
-				env.allowRemoteModels = true;
-				env.useBrowserCache = true;
-				env.useCustomCache = false;
 				env.customCache = null;
-				env.remoteHost = payload.modelMirror || 'https://hf-mirror.com';
-				env.remotePathTemplate = '{model}/resolve/{revision}/';
+				env.fetch = fetchRemoteModel;
 			}
-
-			globalThis.postMessage({ type: 'progress', message: 'Loading local AI model...' });
-
-			generator = await pipeline('text-generation', modelName, {
-				dtype: dtype as any,
-				local_files_only: !!importedModel,
-				progress_callback: (p: any) => {
-					if (p.status === 'ready') {
-						globalThis.postMessage({ type: 'progress', message: 'Local AI model loaded' });
-					}
-					else if (p.status === 'initiate') {
-						globalThis.postMessage({ type: 'progress', message: `Initializing: ${p.file || '...'}` });
-					}
-					else if (p.status === 'progress') {
-						const loaded = p.loaded || 0;
-						const total = p.total || 0;
-						const file = (p.file || '').replace(/^onnx-community\//, '');
-						if (total > 0) {
-							const percent = Math.round((loaded / total) * 100);
-							globalThis.postMessage({ type: 'progress', message: `Downloading ${file}: ${percent}%` });
-						}
+			env.remoteHost = (payload.modelMirror || 'https://huggingface.co').trim().replace(/\/+$/, '');
+			env.remotePathTemplate = '{model}/resolve/{revision}/';
+			const modelName = imported ? `imported/${imported.id}` : payload.modelName;
+			const options = {
+				device: backend,
+				dtype: (imported ? imported.selectedDtype || 'auto' : remoteModelDtype(modelName, payload.dtype, backend)) as DataType,
+				local_files_only: !!imported,
+				progress_callback: (progress: any) => {
+					if (progress.status === 'progress' && progress.total > 0) {
+						post('progress', { message: `Loading model file ${progress.file}: ${Math.round(progress.loaded / progress.total * 100)}%` });
 					}
 				},
-			}) as TextGenerationPipeline;
-
-			globalThis.postMessage({ type: 'progress', message: 'Local AI model ready' });
-			globalThis.postMessage({ type: 'init_done' });
+			};
+			if (payload.kind === 'feature-extraction') {
+				extractor = await pipeline('feature-extraction', modelName, options);
+				post('progress', { message: '向量模型文件已加载，正在预热计算会话…' });
+				await extractor(['ready'], { pooling: 'mean', normalize: true, truncation: true } as any);
+			}
+			else {
+				generator = await pipeline('text-generation', modelName, options) as TextGenerationPipeline;
+				post('progress', { message: '对话模型文件已加载，正在预热计算会话…' });
+				await generator('Hello', { max_new_tokens: 1, do_sample: false });
+			}
+			post('done');
 		}
-		catch (err: any) {
-			globalThis.postMessage({ type: 'error', message: err.message || String(err) });
+		else if (type === 'embed') {
+			if (!extractor)
+				throw new Error('Embedding model is not initialized');
+			const output = await extractor(payload.documents, { pooling: 'mean', normalize: true, truncation: true } as any);
+			const vectors = payload.documents.map((_: string, index: number) => Array.from((output as any)[index].data));
+			post('done', { vectors });
 		}
-	}
-	else if (type === 'generate') {
-		if (!generator) {
-			globalThis.postMessage({ type: 'error', message: 'Model not loaded' });
-			return;
-		}
-
-		aborted = false;
-
-		try {
+		else if (type === 'generate') {
+			if (!generator)
+				throw new Error('Chat model is not initialized');
+			const tokenizer = generator.tokenizer;
+			const countTokens = (messages: Array<{ role: string; content: string }>) => tokenizer.encode(tokenizer.apply_chat_template(messages, { tokenize: false, add_generation_prompt: true }) as string, { add_special_tokens: false }).length;
+			const configuredLimit = localInputTokens(payload.localMaxInputTokens);
+			const modelContext = Number(generator.model.config.max_position_embeddings);
+			const effectiveLimit = Number.isSafeInteger(modelContext) && modelContext > LOCAL_OUTPUT_TOKENS
+				? Math.min(configuredLimit, modelContext - LOCAL_OUTPUT_TOKENS)
+				: configuredLimit;
+			const messages = fitLocalPrompt(payload.messages, countTokens, effectiveLimit);
+			if (JSON.stringify(messages) !== JSON.stringify(payload.messages))
+				post('progress', { message: '已缩减历史和检索上下文，以限制本地推理内存占用。' });
+			post('progress', { message: `正在预填充提示词：${countTokens(messages)} tokens，${backend === 'webgpu' ? 'GPU' : 'CPU'}。首次输出前需要等待。` });
+			let generatedTokens = 0;
 			const streamer = new TextStreamer(generator.tokenizer, {
 				skip_prompt: true,
-				callback_function: (text: string) => {
-					if (aborted)
-						return false;
-					globalThis.postMessage({ type: 'token', text });
+				token_callback_function: () => {
+					generatedTokens++;
+					post('progress', { message: `正在生成回答：${generatedTokens} tokens` });
 				},
+				callback_function: (text: string) => post('token', { text }),
 			});
-
-			await generator(payload.messages as any, {
-				max_new_tokens: 2048,
-				temperature: 0.7,
-				do_sample: true,
-				streamer,
-			});
-
-			if (aborted) {
-				globalThis.postMessage({ type: 'generate_done' });
-			}
-			else {
-				globalThis.postMessage({ type: 'generate_done' });
-			}
+			await generator(messages, { max_new_tokens: LOCAL_OUTPUT_TOKENS, do_sample: false, streamer });
+			post('done');
 		}
-		catch (err: any) {
-			if (!aborted) {
-				globalThis.postMessage({ type: 'error', message: err.message || String(err) });
-			}
-			else {
-				globalThis.postMessage({ type: 'generate_done' });
-			}
+		else {
+			throw new Error('Unknown inference request');
 		}
+	}
+	catch (error) {
+		post('error', { message: (error as Error).message || String(error), name: (error as Error).name });
 	}
 };

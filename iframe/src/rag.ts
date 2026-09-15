@@ -1,4 +1,5 @@
 import type { Document } from '@langchain/core/documents';
+import type { InferenceDevice } from './inference-device';
 import type { ImportedModel } from './model-store';
 import { MemoryVectorStore } from '@langchain/classic/vectorstores/memory';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
@@ -71,6 +72,9 @@ Knowledge base content:
 const EMPTY_SYSTEM_TEMPLATE = 'You are a professional AI assistant. The knowledge base is currently empty. Please answer the user\'s question based on your own knowledge, and remind the user that they can import Markdown documents to build a knowledge base.';
 
 export interface RAGConfig {
+	localMaxInputTokens?: number;
+	customModelMirror?: string;
+	localDevice?: InferenceDevice;
 	apiKey: string;
 	baseURL: string;
 	model: string;
@@ -101,9 +105,10 @@ export class RAGEngine {
 	private indexVersion = -1;
 	public onStatus: ((msg: string) => void) | null = null;
 
-	constructor(onStatus?: (msg: string) => void, modelMirror?: string, embeddingModel?: string, importedEmbeddingModel?: ImportedModel) {
+	constructor(onStatus?: (msg: string) => void, modelMirror?: string, embeddingModel?: string, importedEmbeddingModel?: ImportedModel, device?: InferenceDevice) {
 		this.onStatus = onStatus ?? null;
 		this.embeddings = new LocalEmbeddings({
+			device,
 			onProgress: (msg) => {
 				if (this.onStatus) {
 					this.onStatus(msg);

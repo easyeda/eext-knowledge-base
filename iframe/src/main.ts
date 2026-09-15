@@ -3,9 +3,11 @@ import type { RAGConfig } from './rag';
 import type { UserVectorCache } from './vector-cache';
 import { marked } from 'marked';
 import { builtinVectors, PREBUILT_VECTOR_MODEL_NAME } from './builtin-docs';
+import { normalizeDevice } from './inference-device';
 import { LocalLLM } from './local-llm';
 import { getImportedModel } from './model-store';
 import { RAGEngine } from './rag';
+import { chatModelName, embeddingModelName as normalizeEmbeddingModel } from './remote-models';
 import { deleteVectorCache, hashVectorDocument, importedVectorCacheKey, readUserVectorCache, readVectorCache, remoteVectorCacheKey, userVectorCacheKey, writeUserVectorCache, writeVectorCache } from './vector-cache';
 
 declare const eda: any;
@@ -57,9 +59,12 @@ function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: strin
 				model: obj.model || '',
 				baseURL: obj.baseURL || '',
 				modelMirror: obj.modelMirror || '',
-				embeddingModel: obj.embeddingModel || '',
-				localModel: obj.localModel || '',
+				customModelMirror: obj.customModelMirror || '',
+				embeddingModel: normalizeEmbeddingModel(obj.embeddingModel),
+				localModel: chatModelName(obj.localModel),
+				localDevice: normalizeDevice(obj.localDevice),
 				localDtype: obj.localDtype || '',
+				localMaxInputTokens: obj.localMaxInputTokens,
 				localImportedModelsEnabled: !!obj.localImportedModelsEnabled,
 				usePrebuiltVectors: obj.usePrebuiltVectors !== false,
 				textModelSource: obj.textModelSource || 'remote',
@@ -182,7 +187,7 @@ const userDocumentsVectorCacheKey = userVectorCacheKey(activeVectorModelKey);
 let userVectorCache: UserVectorCache = { version: 1, documents: {} };
 const engine = new RAGEngine((msg) => {
 	addSystemMessage(`【Think】${msg}`);
-}, config.modelMirror, embeddingModelName, importedEmbeddingModel);
+}, config.modelMirror, embeddingModelName, importedEmbeddingModel, config.localDevice);
 
 // ============================================================
 // DOM
@@ -935,6 +940,7 @@ async function handleLocalQuery(question: string, statusDiv: HTMLElement): Promi
 
 	if (!localLLM) {
 		localLLM = new LocalLLM({
+			device: cfg.localDevice,
 			onProgress: (msg) => {
 				statusDiv.textContent = `[Model] ${msg}`;
 				chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -942,9 +948,15 @@ async function handleLocalQuery(question: string, statusDiv: HTMLElement): Promi
 			modelMirror: cfg.modelMirror,
 			modelName: cfg.localModel,
 			dtype: cfg.localDtype,
+			localMaxInputTokens: cfg.localMaxInputTokens,
 			importedModel: importedTextModel,
 		});
 	}
+
+	localLLM.setProgressHandler((message) => {
+		statusDiv.textContent = `[Model] ${message}`;
+		chatMessages.scrollTop = chatMessages.scrollHeight;
+	});
 
 	statusDiv.textContent = eda.sys_I18n.text('Thinking...');
 

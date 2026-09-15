@@ -6,14 +6,14 @@ import { Buffer } from 'node:buffer';
  * 构建时运行：ts-node iframe/prebuild-vectors.ts
  */
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import process from 'node:process';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { PREBUILT_VECTOR_DTYPE, PREBUILT_VECTOR_MODEL_NAME } from './src/prebuilt-vector-info';
 
 const DOCS_DIR = join(__dirname, 'docs');
 const OUTPUT_FILE = join(__dirname, 'src', 'builtin-vectors.json');
-const MODEL_REMOTE_HOST = process.env.TRANSFORMERS_REMOTE_HOST || process.env.HF_ENDPOINT || 'https://hf-mirror.com';
+const MODEL_REMOTE_HOST = process.env.TRANSFORMERS_REMOTE_HOST || process.env.HF_ENDPOINT || 'https://huggingface.co/';
 
 interface VectorEntry {
 	text: string;
@@ -144,13 +144,17 @@ async function main() {
 	// 3. 生成向量
 	console.warn(' 加载 Embedding 模型...');
 	const { AutoModel, AutoTokenizer, env } = await import('@huggingface/transformers');
-	env.allowLocalModels = false;
-	env.allowRemoteModels = true;
+	const localModelPath = process.env.TRANSFORMERS_LOCAL_MODEL_PATH;
+	env.allowLocalModels = !!localModelPath;
+	env.allowRemoteModels = !localModelPath;
+	if (localModelPath)
+		env.localModelPath = `${dirname(localModelPath).replace(/\\/g, '/')}/`;
+	const modelLocation = localModelPath ? basename(localModelPath) : PREBUILT_VECTOR_MODEL_NAME;
 	env.remoteHost = MODEL_REMOTE_HOST;
 	env.remotePathTemplate = '{model}/resolve/{revision}/';
 	console.warn(` 使用模型源: ${MODEL_REMOTE_HOST}`);
-	const tokenizer = await retry('Tokenizer download/load', () => AutoTokenizer.from_pretrained(PREBUILT_VECTOR_MODEL_NAME));
-	const model = await retry('Embedding model download/load', () => AutoModel.from_pretrained(PREBUILT_VECTOR_MODEL_NAME, { dtype: PREBUILT_VECTOR_DTYPE }));
+	const tokenizer = await retry('Tokenizer download/load', () => AutoTokenizer.from_pretrained(modelLocation));
+	const model = await retry('Embedding model download/load', () => AutoModel.from_pretrained(modelLocation, { dtype: PREBUILT_VECTOR_DTYPE }));
 
 	const entries: VectorEntry[] = [];
 	const batchSize = 8;
