@@ -1,10 +1,14 @@
 import type { Document } from '@langchain/core/documents';
 import type { InferenceDevice } from './inference-device';
+import type { EmbeddingAPIConfig, ProviderConfig } from './model-config';
+
 import type { ImportedModel } from './model-store';
 import { MemoryVectorStore } from '@langchain/classic/vectorstores/memory';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
+import { APIEmbeddings } from './api-embeddings';
 import { LocalEmbeddings } from './embeddings';
+import { isSourceIgnored } from './knowledge-policy';
 import { SearchIndex } from './search-index';
 
 declare const eda: any;
@@ -71,7 +75,7 @@ Knowledge base content:
 
 const EMPTY_SYSTEM_TEMPLATE = 'You are a professional AI assistant. The knowledge base is currently empty. Please answer the user\'s question based on your own knowledge, and remind the user that they can import Markdown documents to build a knowledge base.';
 
-export interface RAGConfig {
+export interface RAGConfig extends ProviderConfig {
 	localMaxInputTokens?: number;
 	customModelMirror?: string;
 	localDevice?: InferenceDevice;
@@ -89,8 +93,9 @@ export interface RAGConfig {
 }
 
 export class RAGEngine {
+	private ignoredFolders: string[] = [];
 	private vectorStore: MemoryVectorStore | null = null;
-	private embeddings: LocalEmbeddings;
+	private embeddings: LocalEmbeddings | APIEmbeddings;
 	private splitter: RecursiveCharacterTextSplitter;
 	private allDocs: Document[] = [];
 	/** 与 allDocs 一一对应的向量缓存，避免删除/重建时重新 embedding */
@@ -105,19 +110,21 @@ export class RAGEngine {
 	private indexVersion = -1;
 	public onStatus: ((msg: string) => void) | null = null;
 
-	constructor(onStatus?: (msg: string) => void, modelMirror?: string, embeddingModel?: string, importedEmbeddingModel?: ImportedModel, device?: InferenceDevice) {
+	constructor(onStatus?: (msg: string) => void, modelMirror?: string, embeddingModel?: string, importedEmbeddingModel?: ImportedModel, device?: InferenceDevice, embeddingAPI?: EmbeddingAPIConfig) {
 		this.onStatus = onStatus ?? null;
-		this.embeddings = new LocalEmbeddings({
-			device,
-			onProgress: (msg) => {
-				if (this.onStatus) {
-					this.onStatus(msg);
-				}
-			},
-			modelMirror,
-			modelName: embeddingModel,
-			importedModel: importedEmbeddingModel,
-		});
+		this.embeddings = embeddingAPI
+			? new APIEmbeddings(embeddingAPI)
+			: new LocalEmbeddings({
+					device,
+					onProgress: (msg) => {
+						if (this.onStatus) {
+							this.onStatus(msg);
+						}
+					},
+					modelMirror,
+					modelName: embeddingModel,
+					importedModel: importedEmbeddingModel,
+				});
 		this.splitter = new RecursiveCharacterTextSplitter({
 			chunkSize: 450,
 			chunkOverlap: 100,
@@ -140,6 +147,7 @@ export class RAGEngine {
 			metadata: { source: `${e.source}` },
 		}));
 		const vectors: number[][] = entries.map(e => e.vector);
+		this.validateVectors(vectors, docs.length);
 
 		this.allDocs.push(...docs);
 		this.allVectors.push(...vectors);
@@ -159,12 +167,66 @@ export class RAGEngine {
 		await this.embeddings.prepare();
 	}
 
+	cancelEmbeddingPreparation(): void {
+		if (this.embeddings instanceof LocalEmbeddings) {
+			this.embeddings.dispose();
+		}
+	}
+
+	loadTextEntries(entries: Array<{ text: string; source: string }>): void {
+		this.allDocs.push(...entries.map(entry => ({ pageContent: entry.text, metadata: { source: entry.source } })));
+		this.allVectors.push(...entries.map(() => []));
+		this.docVersion++;
+	}
+
+	async addTextDocument(name: string, content: string): Promise<number> {
+		const documents = await this.splitter.createDocuments([content], [{ source: name }]);
+		this.loadTextEntries(documents.map(document => ({ text: repairTableChunk(document.pageContent, content), source: name })));
+		return documents.length;
+	}
+
+	setIgnoredFolders(folders: string[]): void {
+		this.ignoredFolders = [...folders];
+		this.docVersion++;
+	}
+
+	getTextEntries(includeIgnored = false): Array<{ text: string; source: string }> {
+		return this.allDocs.filter(document => includeIgnored || !isSourceIgnored(String(document.metadata.source), this.ignoredFolders)).map(document => ({ text: document.pageContent, source: String(document.metadata.source) }));
+	}
+
+	async replaceVectorEntries(entries: Array<{ text: string; source: string; vector: number[] }>, preserveTextEntries = false): Promise<void> {
+		this.validateVectors(entries.map(entry => entry.vector), entries.length, entries[0]?.vector.length);
+		const documents = entries.map(entry => ({ pageContent: entry.text, metadata: { source: entry.source } }));
+		const store = new MemoryVectorStore(this.embeddings);
+		await store.addVectors(entries.map(entry => entry.vector), documents);
+		if (preserveTextEntries) {
+			const vectorsBySource = new Map<string, Map<string, number[]>>();
+			for (const entry of entries) {
+				if (!vectorsBySource.has(entry.source)) {
+					vectorsBySource.set(entry.source, new Map());
+				}
+				vectorsBySource.get(entry.source)!.set(entry.text, entry.vector);
+			}
+			this.allVectors = this.allDocs.map(document => vectorsBySource.get(String(document.metadata.source))?.get(document.pageContent) || []);
+		}
+		else {
+			this.allDocs = documents;
+			this.allVectors = entries.map(entry => entry.vector);
+		}
+		this.vectorStore = entries.length > 0 ? store : null;
+		this.docVersion++;
+	}
+
+	async embedTexts(texts: string[], signal?: AbortSignal): Promise<number[][]> {
+		return this.embeddings instanceof APIEmbeddings ? this.embeddings.embedDocuments(texts, signal) : this.embeddings.embedDocuments(texts);
+	}
+
 	async embedAndLoadChunks(
 		entries: Array<{ text: string; source: string }>,
 		onProgress?: (done: number, total: number) => void,
 	): Promise<Array<{ text: string; source: string; vector: number[] }>> {
 		const vectorEntries: Array<{ text: string; source: string; vector: number[] }> = [];
-		const batchSize = 8;
+		const batchSize = this.embeddings instanceof APIEmbeddings ? 32 : 8;
 		for (let i = 0; i < entries.length; i += batchSize) {
 			const batch = entries.slice(i, i + batchSize);
 			const vectors = await this.embeddings.embedDocuments(batch.map(entry => entry.text));
@@ -199,6 +261,7 @@ export class RAGEngine {
 		const vectors = await this.embeddings.embedDocuments(
 			docs.map(d => d.pageContent),
 		);
+		this.validateVectors(vectors, docs.length);
 
 		this.allDocs.push(...docs);
 		this.allVectors.push(...vectors);
@@ -238,9 +301,11 @@ export class RAGEngine {
 		this.docVersion++;
 
 		// 用已有向量直接重建 store，无需重新 embedding
-		this.vectorStore = new MemoryVectorStore(this.embeddings);
-		if (filteredDocs.length > 0) {
-			await this.vectorStore.addVectors(filteredVectors, filteredDocs);
+		this.vectorStore = null;
+		const readyIndices = filteredVectors.flatMap((vector, index) => vector.length > 0 ? [index] : []);
+		if (readyIndices.length > 0) {
+			this.vectorStore = new MemoryVectorStore(this.embeddings);
+			await this.vectorStore.addVectors(readyIndices.map(index => filteredVectors[index]), readyIndices.map(index => filteredDocs[index]));
 		}
 	}
 
@@ -271,7 +336,7 @@ export class RAGEngine {
 			return [];
 		}
 
-		const relevantDocs = await this.vectorStore.similaritySearch(question, topK);
+		const relevantDocs = await this.retrieveDocuments(question, topK);
 		return relevantDocs.map(doc => ({
 			content: doc.pageContent,
 			source: doc.metadata.source,
@@ -285,7 +350,7 @@ export class RAGEngine {
 
 	/** 构建本地搜索索引（从 allDocs 全量构建） */
 	buildSearchIndex(): void {
-		const documents = this.allDocs.map(doc => ({
+		const documents = this.allDocs.filter(doc => !isSourceIgnored(String(doc.metadata.source), this.ignoredFolders)).map(doc => ({
 			content: doc.pageContent,
 			source: doc.metadata.source,
 		}));
@@ -359,6 +424,20 @@ export class RAGEngine {
 		return { answer, sources };
 	}
 
+	private validateVectors(vectors: number[][], count: number, dimensions = this.allVectors.find(vector => vector.length > 0)?.length || vectors[0]?.length): void {
+		if (vectors.length !== count || vectors.some(vector => !Array.isArray(vector) || vector.length === 0
+			|| vector.length !== dimensions || !vector.every(value => typeof value === 'number' && Number.isFinite(value)))) {
+			throw new Error('Incompatible embedding vectors. Rebuild the knowledge base vectors in Settings.');
+		}
+	}
+
+	private async retrieveDocuments(question: string, topK: number): Promise<Document[]> {
+		const vector = await this.embeddings.embedQuery(question);
+		this.validateVectors([vector], 1);
+		const matches = await this.vectorStore!.similaritySearchVectorWithScore(vector, topK, document => !isSourceIgnored(String(document.metadata.source), this.ignoredFolders));
+		return matches.map(([document]) => document);
+	}
+
 	private async buildMessages(question: string, historyRounds?: number): Promise<{ messages: Array<{ role: string; content: string }>; sources: string[] }> {
 		let context = '';
 		const sources: string[] = [];
@@ -367,7 +446,7 @@ export class RAGEngine {
 			if (this.onStatus) {
 				this.onStatus(`Searching knowledge base (${this.allDocs.length} chunks)...`);
 			}
-			const relevantDocs = await this.vectorStore.similaritySearch(question, 8);
+			const relevantDocs = await this.retrieveDocuments(question, 8);
 			if (this.onStatus) {
 				this.onStatus(`检索到 ${relevantDocs.length} 个相关片段`);
 			}

@@ -23,6 +23,7 @@ export class LocalLLM {
 	setProgressHandler(handler: (message: string) => void): void { this.onProgress = handler; }
 
 	get isLoaded(): boolean { return this.client.isLoaded; }
+	async prepare(): Promise<void> { await this.client.run(); }
 	async generate(messages: Array<{ role: string; content: string }>, onToken?: (text: string) => void): Promise<string> {
 		let text = '';
 		await this.client.run('generate', { messages, localMaxInputTokens: this.localMaxInputTokens }, (token) => {

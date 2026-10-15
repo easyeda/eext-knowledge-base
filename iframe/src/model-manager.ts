@@ -1,9 +1,11 @@
 import type { ImportedModel, ImportedModelKind } from './model-store';
 import { InferenceClient } from './inference-client';
 import { normalizeDevice } from './inference-device';
+import { canUsePrebuiltVectors, normalizeProviders } from './model-config';
 import { commitImportedModel, deleteImportedModel, formatBytes, listImportedModels, stageImportedModel, updateImportedModel } from './model-store';
 import { PREBUILT_VECTOR_DTYPE, PREBUILT_VECTOR_MODEL_NAME } from './prebuilt-vector-info';
-import { deleteVectorCache, importedVectorCacheKey } from './vector-cache';
+import { embeddingModelName } from './remote-models';
+import { deleteVectorCache, deleteVectorJournal, importedVectorCacheKey } from './vector-cache';
 
 /* eslint-disable no-template-curly-in-string -- EasyEDA i18n placeholders use ${1}, ${2}. */
 
@@ -20,14 +22,18 @@ interface AssistantConfig {
 	embeddingVectorRebuildToken?: string;
 	localImportedModelsEnabled?: boolean;
 	usePrebuiltVectors?: boolean;
+	chatUseAPI?: boolean;
+	embeddingUseAPI?: boolean;
+	embeddingModel?: string;
 }
 
 function readConfig(): AssistantConfig {
 	try {
-		return JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}');
+		const config = JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}');
+		return { ...config, ...normalizeProviders(config) };
 	}
 	catch {
-		return {};
+		return normalizeProviders({});
 	}
 }
 
@@ -48,8 +54,12 @@ function t(tag: string, ...args: string[]): string {
 	return args.reduce((text, arg, index) => text.replaceAll(`\${${index + 1}}`, arg), tag);
 }
 
-function setStatus(message: string, error = false): void {
-	const status = document.getElementById('model-status')!;
+function modelPrefix(kind: ImportedModelKind): string {
+	return kind === 'text-generation' ? 'chat' : 'embedding';
+}
+
+function setStatus(message: string, error = false, kind: ImportedModelKind = 'feature-extraction'): void {
+	const status = document.getElementById(`${modelPrefix(kind)}-model-status`)!;
 	status.textContent = message;
 	status.classList.toggle('error', error);
 }
@@ -98,14 +108,14 @@ async function confirmAction(message: string, title: string, okText: string, can
 	return window.confirm(message);
 }
 
-function selectedFiles(): File[] {
-	const input = document.getElementById('model-folder') as HTMLInputElement;
+function selectedFiles(kind: ImportedModelKind): File[] {
+	const input = document.getElementById(`${modelPrefix(kind)}-model-folder`) as HTMLInputElement;
 	return Array.from(input.files || []);
 }
 
 async function validateModel(model: ImportedModel): Promise<void> {
-	setStatus(t('Validating model by loading it offline...'));
-	const client = new InferenceClient({ kind: model.kind, importedModel: model, device: normalizeDevice(readConfig().localDevice), onProgress: message => setStatus(t(message)) });
+	setStatus(t('Validating model by loading it offline...'), false, model.kind);
+	const client = new InferenceClient({ kind: model.kind, importedModel: model, device: normalizeDevice(readConfig().localDevice), onProgress: message => setStatus(t(message), false, model.kind) });
 	try {
 		await client.run();
 	}
@@ -117,8 +127,13 @@ function sourceLabel(kind: ImportedModelKind): string {
 }
 
 function renderModels(): void {
-	const container = document.getElementById('model-list')!;
-	const models = listImportedModels().sort((a, b) => b.importedAt - a.importedAt);
+	renderModelList('text-generation');
+	renderModelList('feature-extraction');
+}
+
+function renderModelList(kind: ImportedModelKind): void {
+	const container = document.getElementById(`${modelPrefix(kind)}-model-list`)!;
+	const models = listImportedModels().filter(model => model.kind === kind).sort((first, second) => second.importedAt - first.importedAt);
 	const config = readConfig();
 	container.replaceChildren();
 	if (models.length === 0) {
@@ -129,9 +144,12 @@ function renderModels(): void {
 	container.className = 'model-list';
 	for (const model of models) {
 		const selected = model.kind === 'text-generation'
-			? config.textModelSource === 'imported' && config.textModelId === model.id
-			: config.embeddingModelSource === 'imported' && config.embeddingModelId === model.id;
-		const active = !!config.localImportedModelsEnabled && selected;
+			? (document.getElementById('cfg-text-model-source') as HTMLSelectElement).value === 'imported' && config.textModelId === model.id
+			: (document.getElementById('cfg-embedding-model-source') as HTMLSelectElement).value === 'imported' && config.embeddingModelId === model.id;
+		const useAPI = model.kind === 'text-generation'
+			? (document.getElementById('cfg-chat-use-api') as HTMLInputElement).checked
+			: (document.getElementById('cfg-embedding-use-api') as HTMLInputElement).checked;
+		const active = !useAPI && selected;
 		const row = document.createElement('div');
 		row.className = 'model-row';
 		const info = document.createElement('div');
@@ -158,11 +176,11 @@ function renderModels(): void {
 			model.selectedOnnxFile = selected?.path;
 			updateImportedModel(model);
 			const latestConfig = readConfig();
-			if (model.kind === 'feature-extraction' && latestConfig.localImportedModelsEnabled && latestConfig.usePrebuiltVectors === false && latestConfig.embeddingModelSource === 'imported' && latestConfig.embeddingModelId === model.id) {
+			if (model.kind === 'feature-extraction' && !latestConfig.embeddingUseAPI && latestConfig.embeddingModelSource === 'imported' && latestConfig.embeddingModelId === model.id) {
 				latestConfig.embeddingVectorRebuildToken = String(Date.now());
 			}
 			writeConfig(latestConfig);
-			setStatus(t('${1} precision set to ${2}. Reopen the assistant to apply.', model.name, dtypeSelect.value));
+			setStatus(t('${1} precision set to ${2}. Reopen the assistant to apply.', model.name, dtypeSelect.value), false, model.kind);
 			renderModels();
 		});
 		const useButton = document.createElement('button');
@@ -199,43 +217,25 @@ function activateModel(model: ImportedModel): void {
 		config.embeddingModelSource = 'imported';
 		config.embeddingModelId = model.id;
 		config.embeddingIndexVersion = model.id;
-		if (config.localImportedModelsEnabled && config.usePrebuiltVectors === false) {
-			config.embeddingVectorRebuildToken = String(Date.now());
-		}
 	}
 	writeConfig(config);
-	if (!config.localImportedModelsEnabled) {
-		setStatus(t('Imported model selected. Enable local imported models to use it.'));
-	}
-	else if (model.kind === 'feature-extraction' && config.usePrebuiltVectors !== false) {
-		setStatus(t('Embedding model selected. Prebuilt vectors stay enabled; this model will embed queries and imported docs.'));
-	}
-	else {
-		setStatus(t('${1} selected. Reopen the assistant to apply the change.', model.name));
-	}
+	setStatus(t('${1} selected. Save settings to apply the provider configuration.', model.name), false, model.kind);
 	renderModels();
 }
 
 async function requestVectorRebuild(): Promise<void> {
 	const config = readConfig();
-	if (config.usePrebuiltVectors !== false) {
+	if (canUsePrebuiltVectors(config, embeddingModelName(config.embeddingModel))) {
 		setStatus(t('Prebuilt vectors are enabled. Built-in vectors are reused; the active Embedding model still handles queries and imported docs.'));
 		return;
 	}
-	if (!config.localImportedModelsEnabled) {
-		setStatus(t('Enable local imported models before rebuilding imported vectors.'), true);
-		return;
-	}
-	if (config.embeddingModelSource !== 'imported' || !config.embeddingModelId) {
-		setStatus(t('Select an imported Embedding model before rebuilding vectors.'), true);
-		return;
-	}
-	const model = listImportedModels().find(item => item.id === config.embeddingModelId);
-	if (!model) {
+	const model = !config.embeddingUseAPI && config.embeddingModelSource === 'imported' ? listImportedModels().find(item => item.id === config.embeddingModelId) : undefined;
+	if (!config.embeddingUseAPI && config.embeddingModelSource === 'imported' && !model) {
 		setStatus(t('The active imported Embedding model was not found.'), true);
 		return;
 	}
-	const confirmMessage = t('Rebuild vectors for "${1}" (${2}) on next assistant open?', model.name, model.selectedDtype || 'auto');
+	const modelName = config.embeddingUseAPI ? String(config.embeddingApiModel || '') : model?.name || embeddingModelName(config.embeddingModel);
+	const confirmMessage = t('Rebuild vectors for "${1}" (${2}) on next assistant open?', modelName, config.embeddingUseAPI ? 'API' : model?.selectedDtype || 'auto');
 	setStatus(t('Waiting for vector rebuild confirmation...'));
 	const confirmed = await confirmAction(confirmMessage, t('Rebuild vectors'), t('Rebuild'), t('Cancel'));
 	if (!confirmed) {
@@ -244,16 +244,16 @@ async function requestVectorRebuild(): Promise<void> {
 	}
 	config.embeddingVectorRebuildToken = String(Date.now());
 	writeConfig(config);
-	setStatus(t('Vector rebuild requested for ${1}. Reopen the assistant to rebuild with progress.', model.name));
+	setStatus(t('Vector rebuild requested for ${1}. Reopen the assistant to rebuild with progress.', modelName));
 	showToast(t('Vector rebuild requested'), 0);
 }
 
 async function removeModel(model: ImportedModel): Promise<void> {
 	try {
-		setStatus(t('Waiting for delete confirmation for ${1}...', model.name));
+		setStatus(t('Waiting for delete confirmation for ${1}...', model.name), false, model.kind);
 		const confirmed = await confirmAction(t('Delete imported model "${1}"?', model.name), t('Delete imported model'), t('Delete'), t('Cancel'));
 		if (!confirmed) {
-			setStatus(t('Delete canceled.'));
+			setStatus(t('Delete canceled.'), false, model.kind);
 			return;
 		}
 		const config = readConfig();
@@ -270,38 +270,39 @@ async function removeModel(model: ImportedModel): Promise<void> {
 		writeConfig(config);
 		for (const option of model.onnxFiles || []) {
 			await deleteVectorCache(importedVectorCacheKey(model.id, option.dtype));
+			await deleteVectorJournal(importedVectorCacheKey(model.id, option.dtype));
 		}
 		await deleteVectorCache(importedVectorCacheKey(model.id, model.selectedDtype));
+		await deleteVectorJournal(importedVectorCacheKey(model.id, model.selectedDtype));
 		await deleteImportedModel(model.id);
-		setStatus(t('${1} deleted.', model.name));
+		setStatus(t('${1} deleted.', model.name), false, model.kind);
 		showToast(t('Model deleted'), 0);
 		renderModels();
 	}
 	catch (error) {
-		setStatus(error instanceof Error ? error.message : String(error), true);
+		setStatus(error instanceof Error ? error.message : String(error), true, model.kind);
 	}
 }
 
-async function importSelectedModel(): Promise<void> {
-	const input = document.getElementById('model-folder') as HTMLInputElement;
-	const kind = (document.getElementById('model-kind') as HTMLSelectElement).value as ImportedModelKind;
-	const files = selectedFiles();
+async function importSelectedModel(kind: ImportedModelKind): Promise<void> {
+	const input = document.getElementById(`${modelPrefix(kind)}-model-folder`) as HTMLInputElement;
+	const files = selectedFiles(kind);
 	if (files.length === 0) {
-		setStatus(t('Select a model folder first.'), true);
+		setStatus(t('Select a model folder first.'), true, kind);
 		return;
 	}
-	const button = document.getElementById('import-model-btn') as HTMLButtonElement;
+	const button = document.getElementById(`${modelPrefix(kind)}-import-model-btn`) as HTMLButtonElement;
 	button.disabled = true;
 	let staged: ImportedModel | undefined;
 	try {
-		setStatus(t('Preparing to import ${1} files...', String(files.length)));
+		setStatus(t('Preparing to import ${1} files...', String(files.length)), false, kind);
 		staged = await stageImportedModel(files, kind, (written, total, path) => {
-			setStatus(t('Importing ${1}: ${2}%', path, String(Math.round((written / total) * 100))));
+			setStatus(t('Importing ${1}: ${2}%', path, String(Math.round((written / total) * 100))), false, kind);
 		});
 		await validateModel(staged);
 		commitImportedModel(staged);
 		input.value = '';
-		setStatus(t('${1} imported and validated.', staged.name));
+		setStatus(t('${1} imported and validated.', staged.name), false, kind);
 		showToast(t('Model imported successfully'), 0);
 		renderModels();
 	}
@@ -309,26 +310,31 @@ async function importSelectedModel(): Promise<void> {
 		if (staged) {
 			await deleteImportedModel(staged.id);
 		}
-		setStatus(error instanceof Error ? error.message : String(error), true);
+		setStatus(error instanceof Error ? error.message : String(error), true, kind);
 	}
 	finally {
 		button.disabled = false;
 	}
 }
 
-document.getElementById('import-model-btn')?.addEventListener('click', importSelectedModel);
+for (const kind of ['text-generation', 'feature-extraction'] as const) {
+	document.getElementById(`${modelPrefix(kind)}-import-model-btn`)?.addEventListener('click', () => {
+		void importSelectedModel(kind);
+	});
+	document.getElementById(`${modelPrefix(kind)}-model-folder`)?.addEventListener('change', () => {
+		const files = selectedFiles(kind);
+		if (files.length === 0) {
+			setStatus(t('No folder selected.'), true, kind);
+			return;
+		}
+		const firstPath = files[0].webkitRelativePath || files[0].name;
+		setStatus(t('Selected ${1} files from ${2}. Click Import folder to continue.', String(files.length), firstPath.split('/')[0]), false, kind);
+	});
+}
 document.getElementById('rebuild-vectors-btn')?.addEventListener('click', () => {
 	void requestVectorRebuild();
 });
-document.getElementById('model-folder')?.addEventListener('change', () => {
-	const files = selectedFiles();
-	if (files.length === 0) {
-		setStatus(t('No folder selected.'), true);
-		return;
-	}
-	const firstPath = files[0].webkitRelativePath || files[0].name;
-	setStatus(t('Selected ${1} files from ${2}. Click Import folder to continue.', String(files.length), firstPath.split('/')[0]));
-});
 renderModels();
+window.addEventListener('ai-assistant-provider-preview', renderModels);
+window.addEventListener('ai-assistant-config-updated', renderModels);
 renderPrebuiltVectorInfo();
-setStatus(t('Local model importer ready. Select a model folder to import.'));

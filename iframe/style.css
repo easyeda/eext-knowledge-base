@@ -80,12 +80,31 @@ body {
 }
 
 .folder-actions {
-	display: none;
+	display: flex;
 	gap: 2px;
 	margin-left: 4px;
 	flex-shrink: 0;
 }
 .folder-header:hover .folder-actions { display: flex; }
+.folder-header:focus-within .folder-actions { display: flex; }
+.folder-header.ignored .folder-actions { display: flex; }
+
+.ignored .folder-name, .doc-item.ignored .name {
+	text-decoration: line-through;
+	color: #999;
+}
+
+.folder-actions .fa-ignore {
+	background: none;
+	border: none;
+	padding: 0 2px;
+	color: #999;
+	cursor: pointer;
+	font-size: 15px;
+}
+
+.folder-actions .fa-ignore[aria-pressed="true"] { color: #e67e22; }
+.folder-actions .fa-ignore:disabled { cursor: not-allowed; opacity: 0.5; }
 
 .folder-actions span {
 	cursor: pointer;
@@ -334,6 +353,10 @@ body {
 .vector-progress-text {
 	margin-bottom: 5px;
 	overflow-wrap: anywhere;
+}
+
+#prepare-ai-btn {
+	margin-bottom: 6px;
 }
 
 .vector-progress-track {

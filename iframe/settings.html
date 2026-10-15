@@ -27,9 +27,6 @@
 		.checkbox-label input[type="checkbox"]:checked { border-color: #2f7dc1; background: linear-gradient(180deg, #4a90d9, #2f7dc1); box-shadow: 0 0 0 2px rgba(74, 144, 217, .12); }
 		.checkbox-label input[type="checkbox"]:checked::after { transform: translateX(16px); }
 		.checkbox-label input[type="checkbox"]:focus-visible { box-shadow: 0 0 0 3px rgba(74, 144, 217, .22); }
-		.model-repository { margin-top: 14px; border-top: 1px solid #ddd; padding-top: 14px; }
-		.model-repository h3 { font-size: 14px; color: #333; }
-		.model-repository-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
 		.model-switches { margin: 8px 0 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 7px; border: 1px solid #e6edf5; border-radius: 6px; background: #fff; }
 		.prebuilt-vector-info { display: inline-block; margin-top: 2px; color: #6b7d92; font-family: Consolas, 'SFMono-Regular', monospace; }
 		.usage-guide { margin: 8px 0 10px; border: 1px solid #e6edf5; border-radius: 6px; background: #fbfdff; }
@@ -37,7 +34,7 @@
 		.usage-guide-content { padding: 0 10px 9px; font-size: 10px; line-height: 1.5; color: #64748b; }
 		.usage-guide-content ol { margin-left: 16px; }
 		.usage-guide-content li { margin-top: 3px; }
-		.model-import { display: grid; grid-template-columns: 130px 1fr auto; gap: 8px; align-items: center; }
+		.model-import { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; margin: 8px 0; }
 		.model-import input { min-width: 0; font-size: 12px; }
 		.model-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 		.model-list.empty { font-size: 12px; color: #999; }
@@ -51,12 +48,20 @@
 		.btn-secondary { background: #f1f5f9; color: #24517d; border: 1px solid #d8e2ef; }
 		.btn-small { padding: 5px 8px; background: #e7eef7; color: #24517d; }
 		.btn-danger { color: #a32b2b; background: #f9e8e8; margin-left: 4px; }
-		#model-status { margin-top: 8px; min-height: 16px; font-size: 11px; color: #287a44; overflow-wrap: anywhere; }
-		#model-status.error { color: #b32727; }
+		.model-status { margin-top: 8px; min-height: 16px; font-size: 11px; color: #287a44; overflow-wrap: anywhere; }
+		.model-status.error { color: #b32727; }
+		.provider-section { margin-bottom: 16px; padding: 12px; border: 1px solid #ddd; border-radius: 6px; background: #fafafa; }
+		.provider-section h3 { margin-bottom: 10px; font-size: 14px; }
+		.provider-section > .checkbox-label { margin-bottom: 10px; }
+		[hidden] { display: none !important; }
 	</style>
 </head>
 <body>
 	<h2>⚙️ AI 助手设置</h2>
+	<section class="provider-section">
+		<h3 data-i18n="Chat model">对话模型</h3>
+		<label class="checkbox-label"><input type="checkbox" id="cfg-chat-use-api" checked /><span data-i18n="Use Chat API">使用在线模型</span></label>
+		<div id="chat-api-settings">
 	<div class="field">
 		<label data-i18n="API Type">API 类型</label>
 		<select id="cfg-apitype">
@@ -76,6 +81,72 @@
 		<label data-i18n="API URL">API 地址</label>
 		<input type="text" id="cfg-baseurl" placeholder="例如 https://api.openai.com/v1" data-i18n-placeholder="API URL Placeholder" />
 	</div>
+		</div>
+		<div id="chat-local-settings" hidden>
+			<div class="field">
+				<label data-i18n="Local model source">本地模型来源</label>
+				<select id="cfg-text-model-source"><option value="remote" data-i18n="Download from mirror">从镜像站下载</option><option value="imported" data-i18n="Imported model">导入模型</option></select>
+			</div>
+			<div class="field" id="chat-mirror-model">
+				<label data-i18n="Local AI Model">本地 AI 模型</label>
+				<input type="text" id="cfg-local-model" placeholder="Qwen2.5-0.5B-Instruct-ONNX" />
+				<div class="hint" data-i18n="Local AI Model Hint">留空使用默认模型</div>
+			</div>
+			<div id="chat-import-settings" hidden>
+				<div class="hint" data-i18n="Choose imported model hint">在当前模型设置中导入模型并点击“使用”。</div>
+				<div class="model-import">
+					<input type="file" id="chat-model-folder" aria-label="Chat model folder" data-i18n-aria-label="Chat model folder" webkitdirectory multiple />
+					<button type="button" class="btn btn-primary" id="chat-import-model-btn" data-i18n="Import folder">导入文件夹</button>
+				</div>
+				<div class="hint" data-i18n="Local Model Import Hint">请选择完整的 Transformers.js 兼容 ONNX 模型文件夹。</div>
+				<div id="chat-model-list" class="model-list"></div>
+				<div id="chat-model-status" class="model-status" role="status"></div>
+			</div>
+		</div>
+	</section>
+	<section class="provider-section">
+		<h3 data-i18n="Embedding model">Embedding 模型</h3>
+		<label class="checkbox-label"><input type="checkbox" id="cfg-embedding-use-api" /><span data-i18n="Use Embedding API">使用在线模型</span></label>
+		<div id="embedding-api-settings" hidden>
+			<div class="field"><label data-i18n="API Key">API Key</label><input type="password" id="cfg-embedding-apikey" data-i18n-placeholder="Input API Key" /></div>
+			<div class="field"><label data-i18n="Model Name">模型名称</label><input type="text" id="cfg-embedding-api-model" placeholder="openai/text-embedding-3-small" /></div>
+			<div class="field"><label data-i18n="API URL">API 地址</label><input type="url" id="cfg-embedding-baseurl" placeholder="https://openrouter.ai/api/v1" /></div>
+			<div class="hint" data-i18n="Embedding API hint">使用 OpenAI 兼容的 /embeddings 接口。首次启用会为知识库重新生成向量并缓存，可能产生 API 费用。</div>
+		</div>
+		<div id="embedding-local-settings">
+			<div class="field">
+				<label data-i18n="Local model source">本地模型来源</label>
+				<select id="cfg-embedding-model-source"><option value="remote" data-i18n="Download from mirror">从镜像站下载</option><option value="imported" data-i18n="Imported model">导入模型</option></select>
+			</div>
+			<div class="field" id="embedding-mirror-model">
+				<label data-i18n="Embedding Model">Embedding 模型</label>
+				<input type="text" id="cfg-embedding-model" placeholder="bge-large-zh-v1.5-ONNX" />
+				<div class="hint" data-i18n="Embedding Model Hint">留空使用默认模型</div>
+			</div>
+			<div id="embedding-import-settings" hidden>
+				<div class="hint" data-i18n="Choose imported model hint">在当前模型设置中导入模型并点击“使用”。</div>
+				<div class="model-import">
+					<input type="file" id="embedding-model-folder" aria-label="Embedding model folder" data-i18n-aria-label="Embedding model folder" webkitdirectory multiple />
+					<button type="button" class="btn btn-primary" id="embedding-import-model-btn" data-i18n="Import folder">导入文件夹</button>
+				</div>
+				<div class="hint" data-i18n="Local Model Import Hint">请选择完整的 Transformers.js 兼容 ONNX 模型文件夹。</div>
+				<div id="embedding-model-list" class="model-list"></div>
+			</div>
+			<div class="model-switches" id="prebuilt-settings">
+				<label class="checkbox-label">
+					<input type="checkbox" id="cfg-use-prebuilt-vectors" />
+					<span data-i18n="Use prebuilt vectors">使用预构建向量</span>
+				</label>
+				<div class="hint"><span data-i18n="Compatible prebuilt vectors hint">仅默认镜像 Embedding 模型复用随包向量；API、导入模型和其他镜像模型会自动重建并独立缓存。</span><br /><span id="prebuilt-vector-info" class="prebuilt-vector-info"></span></div>
+			</div>
+		</div>
+		<div class="vector-actions" id="vector-actions">
+			<button type="button" class="btn btn-secondary" id="rebuild-vectors-btn" data-i18n="Rebuild vectors">重构向量</button>
+			<span class="hint" data-i18n="Rebuild Vectors Hint">切换启用的 Embedding 模型或 ONNX 精度后使用。</span>
+		</div>
+		<div id="embedding-model-status" class="model-status" role="status"></div>
+	</section>
+	<div id="local-runtime-settings">
 	<div class="field">
 		<label for="cfg-local-device" data-i18n="Local inference device">本地推理设备</label>
 		<select id="cfg-local-device">
@@ -85,19 +156,7 @@
 		</select>
 		<div class="hint" data-i18n="Local device hint">适用于本地对话和向量模型。自动模式下 GPU 失败会重建 Worker 并回退 CPU；强制 GPU 失败时直接报错。保存后重新打开助手生效，导入验证使用已保存设置。</div>
 	</div>
-	<details class="advanced-section">
-		<summary data-i18n="Advanced Settings">高级设置</summary>
-		<div class="field">
-			<label data-i18n="Embedding Model">Embedding 模型</label>
-			<input type="text" id="cfg-embedding-model" placeholder="bge-large-zh-v1.5-ONNX" />
-			<div class="hint" data-i18n="Embedding Model Hint">用于文档向量化的模型，留空使用默认 bge-large-zh-v1.5-ONNX</div>
-		</div>
-		<div class="field">
-			<label data-i18n="Local AI Model">本地 AI 模型</label>
-			<input type="text" id="cfg-local-model" placeholder="Qwen2.5-0.5B-Instruct-ONNX" />
-			<div class="hint" data-i18n="Local AI Model Hint">本地推理模型，留空使用默认 Qwen2.5-0.5B-Instruct-ONNX</div>
-		</div>
-		<div class="field">
+		<div class="field" id="local-mirror-settings">
 			<label data-i18n="Model Mirror">模型镜像站</label>
 			<select id="cfg-mirror-preset">
 				<option value="huggingface">Hugging Face (huggingface.co)</option>
@@ -107,6 +166,9 @@
 			<input type="url" id="cfg-modelmirror" placeholder="https://your-mirror.example" hidden />
 			<div class="hint" data-i18n="Model Mirror Hint">选择 Hugging Face、HF-Mirror 或自定义兼容镜像。保存后重新打开助手生效。</div>
 		</div>
+	</div>
+	<details class="advanced-section">
+		<summary data-i18n="Advanced Settings">高级设置</summary>
 		<div class="field">
 			<label class="checkbox-label">
 				<input type="checkbox" id="cfg-enable-thinking" />
@@ -119,56 +181,23 @@
 			<input type="number" id="cfg-history-rounds" min="0" max="20" placeholder="3" />
 			<div class="hint" data-i18n="Context Rounds Hint">携带最近 N 轮对话作为上下文，留空默认 3 轮，设为 0 则不携带历史</div>
 		</div>
-		<div class="field">
+		<div class="field" id="local-token-settings">
 			<label for="cfg-local-max-input-tokens" data-i18n="Local input token limit">本地输入上限（tokens）</label>
 			<input type="number" id="cfg-local-max-input-tokens" min="1" step="1" value="131072" placeholder="131072" />
 			<div class="hint" data-i18n="Local input token limit hint">默认 128K（131072 tokens），包含提示词、检索内容和历史。实际还受模型上下文及可用内存限制。</div>
 		</div>
 	</details>
-	<section class="model-repository">
-		<div class="model-repository-header">
-			<h3 data-i18n="Local Model Repository">本地模型仓库</h3>
-			<label class="checkbox-label">
-				<input type="checkbox" id="cfg-local-imported-enabled" />
-				<span data-i18n="Enable imported local models">启用导入本地模型</span>
-			</label>
-		</div>
-		<div class="hint" data-i18n="Enable Imported Local Models Hint">关闭时使用镜像站在线拉取的模型；开启后才使用下方选中的导入模型。</div>
-		<div class="model-switches">
-			<label class="checkbox-label">
-				<input type="checkbox" id="cfg-use-prebuilt-vectors" />
-				<span data-i18n="Use prebuilt vectors">使用预构建向量</span>
-			</label>
-			<div class="hint"><span data-i18n="Use Prebuilt Vectors Hint">开启后内置文档直接使用随包向量；查询和新导入文档使用当前启用的 Embedding 模型。建议与下方编译时模型和量化等级保持兼容。</span><br /><span id="prebuilt-vector-info" class="prebuilt-vector-info"></span></div>
-		</div>
 		<details class="usage-guide">
 			<summary data-i18n="Local Model Usage Guide">使用说明</summary>
 			<div class="usage-guide-content">
 				<ol>
-					<li data-i18n="Local Model Usage Step 1">默认保持“启用导入本地模型”关闭，助手会从镜像站在线拉取模型。</li>
-					<li data-i18n="Local Model Usage Step 2">需要离线模型时，先选择 Chat 或 Embedding 类型，再导入完整的 Transformers.js ONNX 模型文件夹。</li>
-					<li data-i18n="Local Model Usage Step 3">导入后点击模型行的 Use 只会选中模型；开启“启用导入本地模型”后才真正生效。</li>
-					<li data-i18n="Local Model Usage Step 4">开启“使用预构建向量”时，内置文档保持使用随包向量；当前启用的 Embedding 模型用于查询和新导入文档。</li>
-					<li data-i18n="Local Model Usage Step 5">只有关闭预构建向量，并希望用当前导入的 Embedding 模型重构内置文档时，才需要点击 Rebuild vectors。</li>
+					<li data-i18n="Provider usage step 1">分别设置 Chat 和 Embedding 的 API 开关，AI问答会自动使用所选组合。</li>
+					<li data-i18n="Provider usage step 2">关闭 API 后，可选择镜像站下载或导入完整的 Transformers.js ONNX 模型文件夹。</li>
+					<li data-i18n="Provider usage step 3">导入后点击“使用”选择对应本地模型；开启 API 时保留本地选择。</li>
+					<li data-i18n="Compatible prebuilt vectors hint">API、导入模型和其他镜像模型会自动重建向量。</li>
 				</ol>
 			</div>
 		</details>
-		<div class="model-import">
-			<select id="model-kind">
-				<option value="text-generation" data-i18n="Chat model">对话模型</option>
-				<option value="feature-extraction" data-i18n="Embedding model">Embedding 模型</option>
-			</select>
-			<input type="file" id="model-folder" webkitdirectory multiple />
-			<button type="button" class="btn btn-primary" id="import-model-btn" data-i18n="Import folder">导入文件夹</button>
-		</div>
-		<div class="hint" data-i18n="Local Model Import Hint">请选择完整的 Transformers.js 兼容 ONNX 模型文件夹。导入后的模型会保存在本地，并在离线模式下加载。</div>
-		<div class="vector-actions">
-			<button type="button" class="btn btn-secondary" id="rebuild-vectors-btn" data-i18n="Rebuild vectors">重构向量</button>
-			<span class="hint" data-i18n="Rebuild Vectors Hint">切换启用的 Embedding 模型或 ONNX 精度后使用。</span>
-		</div>
-		<div id="model-status"></div>
-		<div id="model-list" class="model-list"></div>
-	</section>
 	<div class="actions">
 		<button class="btn btn-primary" id="save-btn" data-i18n="Save">💾 保存</button>
 	</div>
@@ -185,6 +214,23 @@
 		_i18n['Local input token limit'] = '本地输入上限（tokens）';
 		_i18n['Local input token limit hint'] = '默认 128K（131072 tokens），包含提示词、检索内容和历史。实际还受模型上下文及可用内存限制。';
 		_i18n['Invalid local input token limit'] = '输入上限必须为正整数。';
+		Object.assign(_i18n, {
+			'Use Chat API': '使用在线模型',
+			'Use Embedding API': '使用在线模型',
+			'Local model source': '本地模型来源',
+			'Download from mirror': '从镜像站下载',
+			'Imported model': '导入模型',
+			'Choose imported model hint': '在当前模型设置中导入模型并点击“使用”。',
+			'Chat model folder': 'Chat 模型文件夹',
+			'Embedding model folder': 'Embedding 模型文件夹',
+			'Embedding API hint': '使用 OpenAI 兼容的 /embeddings 接口。首次启用会为知识库重新生成向量并缓存，可能产生 API 费用。',
+			'Compatible prebuilt vectors hint': '仅默认镜像 Embedding 模型复用随包向量；API、导入模型和其他镜像模型会自动重建并独立缓存。',
+			'Provider usage step 1': '分别设置 Chat 和 Embedding 的 API 开关，AI问答会自动使用所选组合。',
+			'Provider usage step 2': '关闭 API 后，可选择镜像站下载或导入完整的 Transformers.js ONNX 模型文件夹。',
+			'Provider usage step 3': '导入后点击“使用”选择对应本地模型；开启 API 时保留本地选择。',
+			'Invalid API settings': '请填写已启用 API 的模型名称及有效的 HTTP(S) 基础地址（不含凭据、查询参数或片段）。',
+			'Settings applied automatically': '设置已保存，助手会在当前任务结束后自动刷新应用；刷新会清除当前对话。',
+		});
 		function applyI18n() {
 			var els = document.querySelectorAll('[data-i18n]');
 			for (var i = 0; i < els.length; i++) { var k = els[i].getAttribute('data-i18n'); els[i].textContent = t(k); }
@@ -192,7 +238,10 @@
 			for (var i = 0; i < titles.length; i++) { var k = titles[i].getAttribute('data-i18n-title'); titles[i].title = t(k); }
 			var phs = document.querySelectorAll('[data-i18n-placeholder]');
 			for (var i = 0; i < phs.length; i++) { var k = phs[i].getAttribute('data-i18n-placeholder'); phs[i].placeholder = t(k); }
+			var ariaLabels = document.querySelectorAll('[data-i18n-aria-label]');
+			for (var i = 0; i < ariaLabels.length; i++) { var k = ariaLabels[i].getAttribute('data-i18n-aria-label'); ariaLabels[i].setAttribute('aria-label', t(k)); }
 		}
+		Object.assign(_i18n, {"Rebuild vectors for \"${1}\" (${2}) on next assistant open?":"是否为“${1}”（${2}）请求全量重构，并在下次点击“开始构建”后开始？","Vector rebuild requested for ${1}. Reopen the assistant to rebuild with progress.":"已为 ${1} 请求全量重构，请点击助手横幅中的“开始构建”开始。","Compatible prebuilt vectors hint":"仅默认镜像 Embedding 模型复用随包向量；其他模型在点击“开始构建”后增量构建缺失向量。"});
 		applyI18n();
 		// Apply i18n to elements with special formatting (emojis, innerHTML)
 		document.title = t('AI Assistant Settings');
@@ -206,12 +255,18 @@
 		var cfgApiKey = document.getElementById('cfg-apikey');
 		var cfgModel = document.getElementById('cfg-model');
 		var cfgBaseURL = document.getElementById('cfg-baseurl');
+		var cfgChatUseAPI = document.getElementById('cfg-chat-use-api');
+		var cfgEmbeddingUseAPI = document.getElementById('cfg-embedding-use-api');
+		var cfgEmbeddingApiKey = document.getElementById('cfg-embedding-apikey');
+		var cfgEmbeddingApiModel = document.getElementById('cfg-embedding-api-model');
+		var cfgEmbeddingBaseURL = document.getElementById('cfg-embedding-baseurl');
+		var cfgTextModelSource = document.getElementById('cfg-text-model-source');
+		var cfgEmbeddingModelSource = document.getElementById('cfg-embedding-model-source');
 		var cfgEmbeddingModel = document.getElementById('cfg-embedding-model');
 		var cfgLocalDevice = document.getElementById('cfg-local-device');
 		var cfgLocalModel = document.getElementById('cfg-local-model');
 		var cfgMirrorPreset = document.getElementById('cfg-mirror-preset');
 		var cfgModelMirror = document.getElementById('cfg-modelmirror');
-		var cfgLocalImportedEnabled = document.getElementById('cfg-local-imported-enabled');
 		var cfgUsePrebuiltVectors = document.getElementById('cfg-use-prebuilt-vectors');
 		var cfgEnableThinking = document.getElementById('cfg-enable-thinking');
 		var cfgHistoryRounds = document.getElementById('cfg-history-rounds');
@@ -237,13 +292,19 @@
 				cfgApiKey.value = obj.apiKey || '';
 				cfgModel.value = obj.model || '';
 				cfgBaseURL.value = obj.baseURL || '';
+				cfgChatUseAPI.checked = obj.chatUseAPI !== false;
+				cfgEmbeddingUseAPI.checked = obj.embeddingUseAPI === true;
+				cfgEmbeddingApiKey.value = obj.embeddingApiKey || '';
+				cfgEmbeddingApiModel.value = obj.embeddingApiModel || '';
+				cfgEmbeddingBaseURL.value = obj.embeddingBaseURL || '';
+				cfgTextModelSource.value = obj.chatUseAPI === undefined && !obj.localImportedModelsEnabled ? 'remote' : obj.textModelSource || 'remote';
+				cfgEmbeddingModelSource.value = obj.embeddingUseAPI === undefined && !obj.localImportedModelsEnabled ? 'remote' : obj.embeddingModelSource || 'remote';
 				cfgEmbeddingModel.value = obj.embeddingModel === 'Xenova/bge-large-zh-v1.5' ? 'JasonYANG170/bge-large-zh-v1.5-ONNX' : obj.embeddingModel || '';
 				cfgLocalModel.value = obj.localModel === 'onnx-community/Qwen2.5-0.5B-Instruct' ? 'JasonYANG170/Qwen2.5-0.5B-Instruct-ONNX' : obj.localModel || '';
 				cfgLocalDevice.value = ['cpu', 'webgpu'].includes(obj.localDevice) ? obj.localDevice : 'auto';
 				var savedMirror = (obj.modelMirror || 'https://huggingface.co').trim().replace(/\/+$/, '');
 				cfgMirrorPreset.value = savedMirror === 'https://huggingface.co' ? 'huggingface' : savedMirror === 'https://hf-mirror.com' ? 'hf-mirror' : 'custom';
 				cfgModelMirror.value = cfgMirrorPreset.value === 'custom' ? savedMirror : obj.customModelMirror || '';
-				cfgLocalImportedEnabled.checked = !!obj.localImportedModelsEnabled;
 				cfgUsePrebuiltVectors.checked = obj.usePrebuiltVectors !== false;
 				cfgEnableThinking.checked = !!obj.enableThinking;
 				cfgHistoryRounds.value = obj.historyRounds !== undefined ? String(obj.historyRounds) : '';
@@ -258,27 +319,71 @@
 		function syncMirrorInput() { cfgModelMirror.hidden = cfgMirrorPreset.value !== 'custom'; }
 		cfgMirrorPreset.addEventListener('change', syncMirrorInput);
 		syncMirrorInput();
+		function syncProviders() {
+			document.getElementById('chat-api-settings').hidden = !cfgChatUseAPI.checked;
+			document.getElementById('chat-local-settings').hidden = cfgChatUseAPI.checked;
+			document.getElementById('embedding-api-settings').hidden = !cfgEmbeddingUseAPI.checked;
+			document.getElementById('embedding-local-settings').hidden = cfgEmbeddingUseAPI.checked;
+			document.getElementById('chat-mirror-model').hidden = cfgTextModelSource.value === 'imported';
+			document.getElementById('embedding-mirror-model').hidden = cfgEmbeddingModelSource.value === 'imported';
+			document.getElementById('chat-import-settings').hidden = cfgTextModelSource.value !== 'imported';
+			document.getElementById('embedding-import-settings').hidden = cfgEmbeddingModelSource.value !== 'imported';
+			document.getElementById('local-runtime-settings').hidden = cfgChatUseAPI.checked && cfgEmbeddingUseAPI.checked;
+			document.getElementById('local-mirror-settings').hidden = (cfgChatUseAPI.checked || cfgTextModelSource.value === 'imported') && (cfgEmbeddingUseAPI.checked || cfgEmbeddingModelSource.value === 'imported');
+			document.getElementById('local-token-settings').hidden = cfgChatUseAPI.checked;
+			document.getElementById('prebuilt-settings').hidden = cfgEmbeddingUseAPI.checked;
+			window.dispatchEvent(new CustomEvent('ai-assistant-provider-preview', { detail: { chatUseAPI: cfgChatUseAPI.checked, embeddingUseAPI: cfgEmbeddingUseAPI.checked } }));
+		}
+		[cfgChatUseAPI, cfgEmbeddingUseAPI, cfgTextModelSource, cfgEmbeddingModelSource].forEach(function(input) { input.addEventListener('change', syncProviders); });
+		syncProviders();
 		window.addEventListener('ai-assistant-config-updated', function() {
-			currentConfig = readCurrentConfig();
+			var latestConfig = readCurrentConfig();
+			if (latestConfig.textModelSource !== currentConfig.textModelSource || latestConfig.textModelId !== currentConfig.textModelId) cfgTextModelSource.value = latestConfig.textModelSource || 'remote';
+			if (latestConfig.embeddingModelSource !== currentConfig.embeddingModelSource || latestConfig.embeddingModelId !== currentConfig.embeddingModelId) cfgEmbeddingModelSource.value = latestConfig.embeddingModelSource || 'remote';
+			currentConfig = latestConfig;
+			syncProviders();
 		});
 
 		// 保存
 		saveBtn.addEventListener('click', function() {
 			var maxInputTokens = cfgLocalMaxInputTokens.value.trim() === '' ? 131072 : Number(cfgLocalMaxInputTokens.value);
-			if (!Number.isSafeInteger(maxInputTokens) || maxInputTokens < 1) {
+			if (!cfgChatUseAPI.checked && (!Number.isSafeInteger(maxInputTokens) || maxInputTokens < 1)) {
 				statusEl.textContent = t('Invalid local input token limit');
 				return;
 			}
 			currentConfig = readCurrentConfig();
+			if ((!cfgChatUseAPI.checked && cfgTextModelSource.value === 'imported' && !currentConfig.textModelId) || (!cfgEmbeddingUseAPI.checked && cfgEmbeddingModelSource.value === 'imported' && !currentConfig.embeddingModelId)) {
+				statusEl.textContent = t('Choose imported model hint');
+				return;
+			}
 			var mirror = cfgMirrorPreset.value === 'huggingface' ? 'https://huggingface.co' : cfgMirrorPreset.value === 'hf-mirror' ? 'https://hf-mirror.com' : cfgModelMirror.value.trim().replace(/\/+$/, '');
+			var needsMirror = (!cfgChatUseAPI.checked && cfgTextModelSource.value === 'remote') || (!cfgEmbeddingUseAPI.checked && cfgEmbeddingModelSource.value === 'remote');
 			try {
 				var mirrorUrl = new URL(mirror);
-				if (!['http:', 'https:'].includes(mirrorUrl.protocol) || mirrorUrl.username || mirrorUrl.password || mirrorUrl.search || mirrorUrl.hash) throw new Error('Invalid mirror');
+				if (needsMirror && (!['http:', 'https:'].includes(mirrorUrl.protocol) || mirrorUrl.username || mirrorUrl.password || mirrorUrl.search || mirrorUrl.hash)) throw new Error('Invalid mirror');
 			} catch(e) {
-				statusEl.textContent = t('Invalid model mirror URL');
+				if (needsMirror) {
+					statusEl.textContent = t('Invalid model mirror URL');
+					return;
+				}
+			}
+			try {
+				[[cfgChatUseAPI.checked, cfgBaseURL.value, cfgModel.value], [cfgEmbeddingUseAPI.checked, cfgEmbeddingBaseURL.value, cfgEmbeddingApiModel.value]].forEach(function(provider) {
+					if (!provider[0]) return;
+					var url = new URL(provider[1].trim());
+					if (!provider[2].trim() || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid API');
+				});
+			} catch(e) {
+				statusEl.textContent = t('Invalid API settings');
 				return;
 			}
 			var config = {
+				...currentConfig,
+				chatUseAPI: cfgChatUseAPI.checked,
+				embeddingUseAPI: cfgEmbeddingUseAPI.checked,
+				embeddingApiKey: cfgEmbeddingApiKey.value.trim(),
+				embeddingApiModel: cfgEmbeddingApiModel.value.trim(),
+				embeddingBaseURL: cfgEmbeddingBaseURL.value.trim().replace(/\/+$/, ''),
 				apiType: cfgApiType.value,
 				apiKey: cfgApiKey.value.trim(),
 				model: cfgModel.value.trim(),
@@ -289,11 +394,10 @@
 				localDevice: cfgLocalDevice.value,
 				modelMirror: mirror,
 				customModelMirror: cfgModelMirror.value.trim(),
-				localImportedModelsEnabled: cfgLocalImportedEnabled.checked,
 				usePrebuiltVectors: cfgUsePrebuiltVectors.checked,
-				textModelSource: currentConfig.textModelSource || 'remote',
+				textModelSource: cfgTextModelSource.value,
 				textModelId: currentConfig.textModelId || '',
-				embeddingModelSource: currentConfig.embeddingModelSource || 'remote',
+				embeddingModelSource: cfgEmbeddingModelSource.value,
 				embeddingModelId: currentConfig.embeddingModelId || '',
 				embeddingIndexVersion: currentConfig.embeddingIndexVersion || '',
 				embeddingVectorRebuildToken: currentConfig.embeddingVectorRebuildToken || '',
@@ -302,7 +406,7 @@
 			};
 			localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
 			window.dispatchEvent(new CustomEvent('ai-assistant-config-updated'));
-			statusEl.textContent = '✅ ' + t('Settings Saved');
+			statusEl.textContent = '✅ ' + t('Settings applied automatically');
 			setTimeout(function() { statusEl.textContent = ''; }, 3000);
 			try {
 				eda.sys_Message.showToastMessage(t('Settings Saved Toast'),"success", 3);
