@@ -11,7 +11,7 @@ Import Markdown documents to build a knowledge base. When a question is asked, t
 
 ## Features
 
-### ✅ Supports general-purpose model APIs and uses a local embedding model to answer questions based on knowledge-base content
+### ✅ Supports Chat and Embedding APIs with independent local model options for knowledge-base Q&A
 
 ![alt text](images/1.gif)
 
@@ -27,6 +27,7 @@ Import Markdown documents to build a knowledge base. When a question is asked, t
 
 ![alt text](images/2.gif)
 
+
 ### Local Mode
 
 ![alt text](images/image4.png)
@@ -37,7 +38,7 @@ The extension is built with Transformers.js and supports ONNX models. On first u
 
 #### Embedding Models
 
-Embeddings for all bundled documents are precomputed when the extension is built. The model used to generate them is shown in Settings. By default, the online model has the same embedding dimensions as the model used for the precomputed embeddings, so the bundled embeddings can be used directly. Using a different embedding model with different dimensions requires regenerating embeddings for every document, which can take a long time and is generally not recommended.
+Embeddings for bundled documents are precomputed at build time. Only the default mirror embedding model automatically reuses these vectors when Use prebuilt vectors is enabled. API, imported and other mirror models automatically load existing caches; without a cache, click Start Building to build and cache missing chunks. Vectors from different models cannot be mixed, even when their dimensions match.
 
 #### LLMs
 

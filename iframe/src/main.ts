@@ -1,14 +1,16 @@
 import type { VectorEntry } from './builtin-docs';
 import type { RAGConfig } from './rag';
-import type { UserVectorCache } from './vector-cache';
 import { marked } from 'marked';
 import { builtinVectors, PREBUILT_VECTOR_MODEL_NAME } from './builtin-docs';
 import { normalizeDevice } from './inference-device';
+import { isPathWithin, isSourceIgnored, renameIgnoredFolders } from './knowledge-policy';
 import { LocalLLM } from './local-llm';
+import { apiVectorCacheKey, canUsePrebuiltVectors, normalizeProviders } from './model-config';
 import { getImportedModel } from './model-store';
 import { RAGEngine } from './rag';
 import { chatModelName, embeddingModelName as normalizeEmbeddingModel } from './remote-models';
-import { deleteVectorCache, hashVectorDocument, importedVectorCacheKey, readUserVectorCache, readVectorCache, remoteVectorCacheKey, userVectorCacheKey, writeUserVectorCache, writeVectorCache } from './vector-cache';
+import { buildIncrementalVectors } from './vector-build';
+import { deleteVectorCache, deleteVectorJournal, hasVectorCache, importedVectorCacheKey, readUserVectorCache, readVectorCache, readVectorJournal, remoteVectorCacheKey, userVectorCacheKey, writeVectorBatch, writeVectorCache } from './vector-cache';
 
 declare const eda: any;
 
@@ -20,6 +22,7 @@ const KB_STATE_KEY = 'ai_assistant_kb_state';
 
 /** 鐭ヨ瘑搴撶姸鎬佹寔涔呭寲 */
 interface KBState {
+	ignoredFolders: string[];
 	/** 宸插垹闄ょ殑鍐呯疆鐭ヨ瘑搴?source keys */
 	deletedSources: string[];
 	/** 鐢ㄦ埛瀵煎叆鐨勬枃妗ｏ紙source key -> content锛? */
@@ -32,11 +35,12 @@ function loadKBState(): KBState {
 	try {
 		const raw = localStorage.getItem(KB_STATE_KEY);
 		if (raw) {
-			return JSON.parse(raw);
+			const state = JSON.parse(raw);
+			return { ...state, ignoredFolders: Array.isArray(state.ignoredFolders) ? state.ignoredFolders.filter((folder: unknown) => typeof folder === 'string' && folder.length > 0) : [] };
 		}
 	}
 	catch { /* ignore */ }
-	return { deletedSources: [], userDocuments: {}, importCounter: 1 };
+	return { deletedSources: [], userDocuments: {}, importCounter: 1, ignoredFolders: [] };
 }
 
 function saveKBState(state: KBState): void {
@@ -54,6 +58,10 @@ function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: strin
 		if (raw) {
 			const obj = JSON.parse(raw);
 			return {
+				...normalizeProviders(obj),
+				embeddingApiKey: obj.embeddingApiKey || '',
+				embeddingBaseURL: obj.embeddingBaseURL || '',
+				embeddingApiModel: obj.embeddingApiModel || '',
 				apiType: obj.apiType || 'openai',
 				apiKey: obj.apiKey || '',
 				model: obj.model || '',
@@ -67,9 +75,7 @@ function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: strin
 				localMaxInputTokens: obj.localMaxInputTokens,
 				localImportedModelsEnabled: !!obj.localImportedModelsEnabled,
 				usePrebuiltVectors: obj.usePrebuiltVectors !== false,
-				textModelSource: obj.textModelSource || 'remote',
 				textModelId: obj.textModelId || '',
-				embeddingModelSource: obj.embeddingModelSource || 'remote',
 				embeddingModelId: obj.embeddingModelId || '',
 				embeddingVectorRebuildToken: obj.embeddingVectorRebuildToken || '',
 				enableThinking: !!obj.enableThinking,
@@ -78,7 +84,7 @@ function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: strin
 		}
 	}
 	catch { /* ignore */ }
-	return { apiType: 'openai', apiKey: '', model: '', baseURL: '', modelMirror: '', embeddingModel: '', localModel: '', localDtype: '', localImportedModelsEnabled: false, usePrebuiltVectors: true, textModelSource: 'remote', textModelId: '', embeddingModelSource: 'remote', embeddingModelId: '', embeddingVectorRebuildToken: '', enableThinking: false, historyRounds: 3 };
+	return { ...normalizeProviders({}), apiType: 'openai', apiKey: '', model: '', baseURL: '', modelMirror: '', embeddingModel: '', localModel: '', localDtype: '', localImportedModelsEnabled: false, usePrebuiltVectors: true, textModelId: '', embeddingModelId: '', embeddingVectorRebuildToken: '', enableThinking: false, historyRounds: 3 };
 }
 
 function saveConfig(config: ReturnType<typeof loadConfig>): void {
@@ -176,18 +182,32 @@ function ensureFolder(parent: DocNode[], parentPath: string, segments: string[])
 // 鐘舵€?
 // ============================================================
 const config = loadConfig();
-const usePrebuiltVectors = config.usePrebuiltVectors !== false;
-const importedEmbeddingModel = config.localImportedModelsEnabled && config.embeddingModelSource === 'imported' ? getImportedModel(config.embeddingModelId) : undefined;
-const embeddingModelName = importedEmbeddingModel ? '' : usePrebuiltVectors ? PREBUILT_VECTOR_MODEL_NAME : config.embeddingModel;
-const forceVectorRebuild = !!config.embeddingVectorRebuildToken;
-const activeVectorModelKey = importedEmbeddingModel
-	? importedVectorCacheKey(importedEmbeddingModel.id, importedEmbeddingModel.selectedDtype)
-	: remoteVectorCacheKey(embeddingModelName || PREBUILT_VECTOR_MODEL_NAME);
+const importedEmbeddingModel = !config.embeddingUseAPI && config.embeddingModelSource === 'imported' ? getImportedModel(config.embeddingModelId) : undefined;
+const embeddingModelName = config.embeddingModel || PREBUILT_VECTOR_MODEL_NAME;
+const usePrebuiltVectors = canUsePrebuiltVectors(config, embeddingModelName);
+const embeddingAPI = config.embeddingUseAPI
+	? {
+			apiKey: config.embeddingApiKey || '',
+			baseURL: config.embeddingBaseURL || '',
+			model: config.embeddingApiModel || '',
+		}
+	: undefined;
+let forceVectorRebuild = !!config.embeddingVectorRebuildToken;
+const activeVectorModelKey = embeddingAPI
+	? apiVectorCacheKey(embeddingAPI)
+	: importedEmbeddingModel
+		? importedVectorCacheKey(importedEmbeddingModel.id, importedEmbeddingModel.selectedDtype)
+		: remoteVectorCacheKey(embeddingModelName || PREBUILT_VECTOR_MODEL_NAME);
 const userDocumentsVectorCacheKey = userVectorCacheKey(activeVectorModelKey);
-let userVectorCache: UserVectorCache = { version: 1, documents: {} };
+let knowledgeBaseReady = false;
+let vectorBaselineAvailable = false;
+let preparationRunning = false;
+let currentAbortController: AbortController | null = null;
+let stopped = false;
+let localLLM: LocalLLM | null = null;
 const engine = new RAGEngine((msg) => {
 	addSystemMessage(`【Think】${msg}`);
-}, config.modelMirror, embeddingModelName, importedEmbeddingModel, config.localDevice);
+}, config.modelMirror, embeddingModelName, importedEmbeddingModel, config.localDevice, embeddingAPI);
 
 // ============================================================
 // DOM
@@ -200,13 +220,14 @@ const chatMessages = document.getElementById('chat-messages')!;
 const userInput = document.getElementById('user-input') as HTMLTextAreaElement;
 const sendBtn = document.getElementById('send-btn') as HTMLButtonElement;
 const stopBtn = document.getElementById('stop-btn') as HTMLButtonElement;
-const modeApiBtn = document.getElementById('mode-api') as HTMLButtonElement;
-const modeLocalBtn = document.getElementById('mode-local') as HTMLButtonElement;
+const modeAiBtn = document.getElementById('mode-ai') as HTMLButtonElement;
 const modeIndexBtn = document.getElementById('mode-index') as HTMLButtonElement;
 const rebuildIndexBtn = document.getElementById('rebuild-index') as HTMLButtonElement;
 const vectorProgress = document.getElementById('vector-progress')!;
 const vectorProgressText = vectorProgress.querySelector('.vector-progress-text') as HTMLElement;
 const vectorProgressBar = vectorProgress.querySelector('.vector-progress-bar') as HTMLElement;
+const prepareAiBtn = document.getElementById('prepare-ai-btn') as HTMLButtonElement;
+const vectorProgressTrack = vectorProgress.querySelector('.vector-progress-track') as HTMLElement;
 const previewModal = document.getElementById('preview-modal')!;
 const previewTitle = document.getElementById('preview-title')!;
 const previewBody = document.getElementById('preview-body')!;
@@ -216,20 +237,17 @@ const previewVisit = document.getElementById('preview-visit') as HTMLAnchorEleme
 // ============================================================
 // 妯″紡绠＄悊
 // ============================================================
-type SearchMode = 'api' | 'local' | 'index';
-let currentMode: SearchMode = 'api';
+type SearchMode = 'ai' | 'index';
+let currentMode: SearchMode = 'ai';
 
 function setMode(mode: SearchMode): void {
 	currentMode = mode;
-	modeApiBtn.classList.toggle('active', mode === 'api');
-	modeLocalBtn.classList.toggle('active', mode === 'local');
+	modeAiBtn.classList.toggle('active', mode === 'ai');
 	modeIndexBtn.classList.toggle('active', mode === 'index');
 	rebuildIndexBtn.style.display = mode === 'index' ? 'inline-block' : 'none';
-	userInput.placeholder = mode === 'api'
+	userInput.placeholder = mode === 'ai'
 		? eda.sys_I18n.text('Input your question...')
-		: mode === 'local'
-			? eda.sys_I18n.text('Input your question (local AI)...')
-			: eda.sys_I18n.text('Input keywords to search knowledge base...');
+		: eda.sys_I18n.text('Input keywords to search knowledge base...');
 
 	// 棣栨鍒囧埌鍏抽敭璇嶆绱㈡ā寮忔椂锛屽脊绐楁彁绀洪渶瑕佸垱寤虹储寮?
 	if (mode === 'index') {
@@ -280,18 +298,27 @@ function rebuildSearchIndex(): void {
 function setVectorProgress(message: string, done = 0, total = 0): void {
 	vectorProgress.style.display = '';
 	vectorProgressText.textContent = message;
+	vectorProgressTrack.hidden = !preparationRunning;
+	prepareAiBtn.hidden = preparationRunning;
+	prepareAiBtn.disabled = preparationRunning;
 	const percent = total > 0 ? Math.round((done / total) * 100) : 0;
 	vectorProgressBar.style.width = `${percent}%`;
 }
 
-function hideVectorProgress(): void {
-	vectorProgress.style.display = 'none';
-	vectorProgressBar.style.width = '0%';
+function isAIReady(): boolean {
+	return knowledgeBaseReady && (config.chatUseAPI === true || !!localLLM?.isLoaded);
+}
+
+function updatePreparationBanner(message?: string): void {
+	setVectorProgress(message || eda.sys_I18n.text(isAIReady()
+		? 'AI Q&A ready. Cached vectors are reused.'
+		: 'First run or changing the Embedding model requires rebuilding all vectors.'));
+	prepareAiBtn.hidden = isAIReady();
 }
 
 function acknowledgeVectorRebuildRequest(): void {
 	const latest = loadConfig();
-	if (!latest.embeddingVectorRebuildToken) {
+	if (!latest.embeddingVectorRebuildToken || latest.embeddingVectorRebuildToken !== config.embeddingVectorRebuildToken) {
 		return;
 	}
 	latest.embeddingVectorRebuildToken = '';
@@ -302,13 +329,31 @@ function acknowledgeVectorRebuildRequest(): void {
 // 鍒濆鍖?
 // ============================================================
 addSystemMessage(eda.sys_I18n.text('Welcome to AI Knowledge Base Assistant'));
-if (!config.apiKey || !config.model || !config.baseURL) {
+if (config.chatUseAPI && (!config.model || !config.baseURL)) {
 	addSystemMessage(eda.sys_I18n.text('Please configure API Key, model name and API URL in the Settings menu'));
 }
 
 // 鍏堝姞杞界敤鎴锋枃妗ｏ紙宸插湪鍐呭瓨涓級锛屽啀鍔犺浇鍐呯疆鐭ヨ瘑搴?
+let configReloadPending = false;
 const initializationPromise = initializeKnowledgeBase();
+void initializationPromise.then(async () => {
+	if (vectorBaselineAvailable) {
+		await prepareAI();
+	}
+});
 
+window.addEventListener('storage', (event) => {
+	if (event.key === STORAGE_KEY && event.newValue !== event.oldValue) {
+		configReloadPending = true;
+		if (!sendBtn.disabled) {
+			location.reload();
+		}
+	}
+});
+
+prepareAiBtn.addEventListener('click', () => {
+	void prepareAI();
+});
 fileInput.addEventListener('change', handleFileUpload);
 sendBtn.addEventListener('click', handleSend);
 clearKbBtn.addEventListener('click', handleClearKB);
@@ -320,8 +365,7 @@ userInput.addEventListener('keydown', (e) => {
 });
 
 // 妯″紡鍒囨崲浜嬩欢
-modeApiBtn.addEventListener('click', () => setMode('api'));
-modeLocalBtn.addEventListener('click', () => setMode('local'));
+modeAiBtn.addEventListener('click', () => setMode('ai'));
 modeIndexBtn.addEventListener('click', () => setMode('index'));
 rebuildIndexBtn.addEventListener('click', () => {
 	eda.sys_Dialog.showConfirmationMessage(
@@ -357,248 +401,262 @@ document.addEventListener('keydown', (e) => {
 // ============================================================
 async function initializeKnowledgeBase(): Promise<void> {
 	sendBtn.disabled = true;
-	setVectorProgress(eda.sys_I18n.text('Loading knowledge base...'));
+	prepareAiBtn.disabled = true;
 	try {
-		await loadBuiltinDocs();
-		await loadUserDocuments();
-		if (engine.documentCount > 0) {
-			setVectorProgress(eda.sys_I18n.text('Preparing embedding model...'));
-			await engine.prepareEmbeddings();
+		engine.clear();
+		rootNodes.length = 0;
+		const builtin = builtinVectors.filter(entry => !kbState.deletedSources.includes(entry.source));
+		engine.loadTextEntries(builtin.map(entry => ({ text: entry.text, source: entry.source })));
+		for (const entry of builtin) {
+			registerSource(entry.source);
 		}
-		acknowledgeVectorRebuildRequest();
-		setVectorProgress(eda.sys_I18n.text('Knowledge base ready'), 1, 1);
-	}
-	catch (error) {
-		console.error('[AI-Assistant] Failed to initialize knowledge base:', error);
-		addSystemMessage(eda.sys_I18n.text('Failed to initialize the knowledge base. The embedding model will retry on the next query.'));
-	}
-	finally {
-		setTimeout(hideVectorProgress, 1200);
-		sendBtn.disabled = false;
-	}
-}
-
-async function loadBuiltinDocs(): Promise<void> {
-	if (builtinVectors.length === 0) {
-		return;
-	}
-	// 杩囨护鎺夊凡鍒犻櫎鐨勫唴缃枃妗?
-	const filteredVectors = builtinVectors.filter(v => !kbState.deletedSources.includes(v.source));
-	const filteredSources = new Set(filteredVectors.map(v => v.source));
-
-	try {
-		if (filteredVectors.length > 0) {
-			let count: number;
-			if (usePrebuiltVectors) {
-				count = await engine.loadPrebuiltVectors(filteredVectors);
-			}
-			else if (importedEmbeddingModel) {
-				const cacheKey = importedVectorCacheKey(importedEmbeddingModel.id, importedEmbeddingModel.selectedDtype);
-				const forceRebuild = forceVectorRebuild;
-				if (forceRebuild) {
-					await deleteVectorCache(cacheKey);
-				}
-				let cachedVectors = forceRebuild ? null : await readVectorCache(cacheKey);
-				if (cachedVectors) {
-					cachedVectors = cachedVectors.filter(v => filteredSources.has(v.source));
-					setVectorProgress(`Loaded cached vectors for ${importedEmbeddingModel.name}`, cachedVectors.length, cachedVectors.length);
-				}
-				else {
-					setVectorProgress(`Building vectors with ${importedEmbeddingModel.name}...`, 0, filteredVectors.length);
-					cachedVectors = await engine.embedAndLoadChunks(filteredVectors.map(v => ({ text: v.text, source: v.source })), (done, total) => {
-						setVectorProgress(`Building vectors with ${importedEmbeddingModel.name}: ${done}/${total}`, done, total);
-					});
-					await writeVectorCache(cacheKey, cachedVectors);
-				}
-				setVectorProgress(`Loading vectors for ${importedEmbeddingModel.name}...`, cachedVectors.length, cachedVectors.length);
-				await engine.loadPrebuiltVectors(cachedVectors);
-				count = cachedVectors.length;
-				setTimeout(hideVectorProgress, 1200);
-			}
-			else {
-				const modelName = config.embeddingModel || PREBUILT_VECTOR_MODEL_NAME;
-				const cacheKey = remoteVectorCacheKey(modelName);
-				let cachedVectors = await readVectorCache(cacheKey);
-				if (cachedVectors) {
-					cachedVectors = cachedVectors.filter(v => filteredSources.has(v.source));
-					setVectorProgress(eda.sys_I18n.text('Loaded cached vectors'), cachedVectors.length, cachedVectors.length);
-				}
-				else {
-					setVectorProgress(eda.sys_I18n.text('Building vectors...'), 0, filteredVectors.length);
-					cachedVectors = await engine.embedAndLoadChunks(filteredVectors.map(v => ({ text: v.text, source: v.source })), (done, total) => {
-						// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
-						setVectorProgress(eda.sys_I18n.text('Building vectors: ${1}/${2}', undefined, undefined, String(done), String(total)), done, total);
-					});
-					await writeVectorCache(cacheKey, cachedVectors);
-				}
-				await engine.loadPrebuiltVectors(cachedVectors);
-				count = cachedVectors.length;
-				setTimeout(hideVectorProgress, 1200);
-			}
-			// 鎸夎矾寰勫垎缁勫埌鏍戝舰缁撴瀯
-			for (const v of filteredVectors) {
-				const parts = v.source.split('/');
-				const file = parts.pop()!;
-				const folderSegments = parts.length > 0 ? parts : [eda.sys_I18n.text('Built-in Knowledge Base')];
-				const folder = ensureFolder(rootNodes, '', folderSegments);
-				if (!folder.files.includes(file)) {
-					folder.files.push(file);
-				}
-			}
-			// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
-			addSystemMessage(eda.sys_I18n.text('Loaded built-in knowledge base (${1} chunks). You can import more documents.', undefined, undefined, String(count)));
+		for (const [source, content] of Object.entries(kbState.userDocuments)) {
+			await engine.addTextDocument(source, content);
+			registerSource(source);
 		}
-		else {
-			addSystemMessage(eda.sys_I18n.text('Built-in knowledge base is empty. Import documents to build a custom knowledge base.'));
-		}
+		importCounter = kbState.importCounter;
+		engine.setIgnoredFolders(kbState.ignoredFolders);
+		vectorBaselineAvailable = !forceVectorRebuild && (
+			usePrebuiltVectors
+			|| await hasVectorCache(activeVectorModelKey)
+			|| await hasVectorCache(userDocumentsVectorCacheKey)
+		);
 		renderDocList();
 	}
-	catch {
-		addSystemMessage(eda.sys_I18n.text('Failed to load built-in knowledge base'));
+	catch (error) {
+		console.error('[AI-Assistant] Failed to load knowledge base text:', error);
+		addSystemMessage(error instanceof Error ? error.message : String(error));
+	}
+	finally {
+		sendBtn.disabled = false;
+		prepareAiBtn.disabled = false;
+		if (!vectorBaselineAvailable) {
+			updatePreparationBanner();
+		}
+		if (configReloadPending) {
+			location.reload();
+		}
 	}
 }
 
-// ============================================================
-// 鐢ㄦ埛鏂囨。
-// ============================================================
-async function loadUserDocuments(): Promise<void> {
-	const entries = Object.entries(kbState.userDocuments);
-	const cached = forceVectorRebuild ? null : await readUserVectorCache(userDocumentsVectorCacheKey);
-	const nextCache: UserVectorCache = { version: 1, documents: {} };
-	let cacheChanged = !cached || forceVectorRebuild || Object.keys(cached.documents).length !== entries.length;
-	userVectorCache = cached ?? nextCache;
-	if (entries.length === 0) {
-		if (cached && Object.keys(cached.documents).length > 0) {
-			userVectorCache = nextCache;
-			await persistUserVectorCache();
-		}
+function registerSource(source: string): void {
+	const parts = source.split('/');
+	const file = parts.pop()!;
+	const folder = ensureFolder(rootNodes, '', parts.length > 0 ? parts : [eda.sys_I18n.text('Built-in Knowledge Base')]);
+	if (!folder.files.includes(file)) {
+		folder.files.push(file);
+	}
+}
+
+function getLocalChatModel(onProgress: (message: string) => void): LocalLLM {
+	const importedTextModel = config.textModelSource === 'imported' ? getImportedModel(config.textModelId) : undefined;
+	if (config.textModelSource === 'imported' && !importedTextModel) {
+		throw new Error(eda.sys_I18n.text('The active imported Chat model was not found.'));
+	}
+	if (!localLLM) {
+		localLLM = new LocalLLM({
+			device: config.localDevice,
+			modelMirror: config.modelMirror,
+			modelName: config.localModel,
+			dtype: config.localDtype,
+			localMaxInputTokens: config.localMaxInputTokens,
+			importedModel: importedTextModel,
+		});
+	}
+	localLLM.setProgressHandler(onProgress);
+	return localLLM;
+}
+
+async function prepareAI(incrementalOnly = false): Promise<void> {
+	if (preparationRunning || sendBtn.disabled) {
 		return;
 	}
-
-	// 鎸?source key 璺緞鍒嗙粍
-	const folderMap = new Map<string, Array<{ file: string; content: string }>>();
-	for (const [sourceKey, content] of entries) {
-		const parts = sourceKey.split('/');
-		const file = parts.pop()!;
-		const folderPath = parts.join('/');
-		if (!folderMap.has(folderPath)) {
-			folderMap.set(folderPath, []);
-		}
-		folderMap.get(folderPath)!.push({ file, content });
-	}
-
-	// 鍔犺浇姣忎釜鏂囦欢澶?
-	let loaded = 0;
-	for (const [folderPath, files] of folderMap) {
-		const folderSegments = folderPath.split('/').filter(Boolean);
-		const folder = ensureFolder(rootNodes, '', folderSegments);
-
-		for (const { file, content } of files) {
-			try {
-				const sourceKey = getSourceKey(folderPath, file);
-				const contentHash = await hashVectorDocument(content);
-				const cachedDocument = cached?.documents[sourceKey];
-				let vectors: VectorEntry[];
-				if (cachedDocument?.contentHash === contentHash && cachedDocument.vectors.length > 0) {
-					vectors = cachedDocument.vectors;
-					await engine.loadVectorEntries(vectors);
-				}
-				else {
-					vectors = await engine.addDocumentWithVectors(sourceKey, content);
-					cacheChanged = true;
-				}
-				nextCache.documents[sourceKey] = { contentHash, vectors };
-				loaded++;
-				// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
-				setVectorProgress(eda.sys_I18n.text('Loading user documents: ${1}/${2}', undefined, undefined, String(loaded), String(entries.length)), loaded, entries.length);
-				if (!folder.files.includes(file)) {
-					folder.files.push(file);
-				}
-			}
-			catch {
-				// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
-				addSystemMessage(eda.sys_I18n.text('Failed to load user document: ${1}', undefined, undefined, file));
-			}
-		}
-	}
-
-	userVectorCache = nextCache;
-	if (cacheChanged) {
-		await persistUserVectorCache();
-	}
-	renderDocList();
-	importCounter = kbState.importCounter;
-}
-
-async function cacheUserDocumentVectors(sourceKey: string, content: string, vectors: VectorEntry[]): Promise<void> {
-	userVectorCache.documents[sourceKey] = {
-		contentHash: await hashVectorDocument(content),
-		vectors,
-	};
-}
-
-async function persistUserVectorCache(): Promise<void> {
+	preparationRunning = true;
+	knowledgeBaseReady = false;
+	sendBtn.disabled = true;
+	fileInput.disabled = true;
+	clearKbBtn.disabled = true;
+	docList.inert = true;
+	stopBtn.style.display = '';
+	stopped = false;
+	const controller = new AbortController();
+	currentAbortController = controller;
+	const previousStatus = engine.onStatus;
+	engine.onStatus = message => setVectorProgress(message);
+	let resultMessage: string | undefined;
 	try {
-		await writeUserVectorCache(userDocumentsVectorCacheKey, userVectorCache);
+		await initializationPromise;
+		if (!incrementalOnly && config.chatUseAPI && (!config.model || !config.baseURL)) {
+			throw new Error(eda.sys_I18n.text('Please configure API Key, model name and API URL in the Settings menu first'));
+		}
+		if (!config.embeddingUseAPI && config.embeddingModelSource === 'imported' && !importedEmbeddingModel) {
+			throw new Error(eda.sys_I18n.text('The active imported Embedding model was not found.'));
+		}
+		const entries = engine.getTextEntries();
+		setVectorProgress(eda.sys_I18n.text('Loading cached vectors...'));
+		let cached: VectorEntry[] = [];
+		if (forceVectorRebuild) {
+			vectorBaselineAvailable = false;
+			await deleteVectorCache(activeVectorModelKey);
+			await deleteVectorJournal(activeVectorModelKey);
+			await deleteVectorCache(userDocumentsVectorCacheKey);
+			acknowledgeVectorRebuildRequest();
+			forceVectorRebuild = false;
+		}
+		else {
+			cached = await readVectorCache(activeVectorModelKey) || [];
+			cached.push(...await readVectorJournal(activeVectorModelKey));
+			const legacyCache = await readUserVectorCache(userDocumentsVectorCacheKey);
+			if (legacyCache) {
+				for (const document of Object.values(legacyCache.documents)) {
+					cached.push(...document.vectors);
+				}
+			}
+		}
+		if (usePrebuiltVectors) {
+			cached.push(...builtinVectors);
+		}
+		if (controller.signal.aborted) {
+			throw new DOMException('Preparation canceled', 'AbortError');
+		}
+		let embeddingPrepared = false;
+		const vectors = await buildIncrementalVectors(entries, cached, async (texts) => {
+			if (!embeddingPrepared) {
+				setVectorProgress(eda.sys_I18n.text('Preparing embedding model...'));
+				await engine.prepareEmbeddings();
+				embeddingPrepared = true;
+			}
+			return engine.embedTexts(texts, controller.signal);
+		}, batch => writeVectorBatch(activeVectorModelKey, batch), (done, total) => {
+			setVectorProgress(eda.sys_I18n.text('Preparing vectors: {done}/{total}').replace('{done}', String(done)).replace('{total}', String(total)), done, total);
+		}, config.embeddingUseAPI ? 32 : 8, controller.signal);
+		const ignoredEntries = new Set(engine.getTextEntries(true).filter(entry => isSourceIgnored(entry.source, kbState.ignoredFolders)).map(entry => JSON.stringify([entry.source, entry.text])));
+		const retainedIgnored = new Map<string, VectorEntry>();
+		for (const entry of cached) {
+			const key = JSON.stringify([entry.source, entry.text]);
+			if (ignoredEntries.has(key)) {
+				retainedIgnored.set(key, entry);
+			}
+		}
+		const prebuiltTexts = usePrebuiltVectors ? new Set(builtinVectors.map(entry => entry.text)) : new Set<string>();
+		// Bundled vectors already persist in the extension; cache only additional content.
+		const persistentVectors = [...vectors, ...retainedIgnored.values()].filter(entry => !prebuiltTexts.has(entry.text));
+		await writeVectorCache(activeVectorModelKey, persistentVectors);
+		vectorBaselineAvailable = true;
+		await deleteVectorJournal(activeVectorModelKey);
+		await deleteVectorCache(userDocumentsVectorCacheKey);
+		await engine.replaceVectorEntries(vectors, true);
+		if (controller.signal.aborted) {
+			throw new DOMException('Preparation canceled', 'AbortError');
+		}
+		if (!incrementalOnly && !config.chatUseAPI) {
+			setVectorProgress(eda.sys_I18n.text('Preparing local Chat model...'));
+			await getLocalChatModel(message => setVectorProgress(message)).prepare();
+		}
+		if (controller.signal.aborted) {
+			throw new DOMException('Preparation canceled', 'AbortError');
+		}
+		knowledgeBaseReady = true;
 	}
 	catch (error) {
-		console.error('[AI-Assistant] Failed to persist user document vectors:', error);
+		if ((error instanceof Error || error instanceof DOMException) && error.name === 'AbortError') {
+			resultMessage = eda.sys_I18n.text('Preparation paused. Completed vectors are saved. Click to continue.');
+		}
+		else {
+			console.error('[AI-Assistant] Failed to prepare AI Q&A:', error);
+			addSystemMessage(error instanceof Error ? error.message : String(error));
+			resultMessage = eda.sys_I18n.text('Preparation failed. Click to retry with saved progress.');
+		}
+	}
+	finally {
+		engine.onStatus = previousStatus;
+		preparationRunning = false;
+		currentAbortController = null;
+		stopBtn.style.display = 'none';
+		sendBtn.disabled = false;
+		fileInput.disabled = false;
+		clearKbBtn.disabled = false;
+		docList.inert = false;
+		updatePreparationBanner(resultMessage);
+		if (configReloadPending) {
+			location.reload();
+		}
 	}
 }
 
-// ============================================================
-// 鏂囦欢涓婁紶 鈥?鍒涘缓鏂版枃浠跺す
-// ============================================================
+async function updateVectorsAfterChange(): Promise<void> {
+	knowledgeBaseReady = false;
+	updatePreparationBanner();
+	if (vectorBaselineAvailable && !forceVectorRebuild) {
+		await prepareAI(true);
+	}
+}
+
+async function toggleIgnoredFolder(node: DocNode): Promise<void> {
+	if (sendBtn.disabled || preparationRunning) {
+		return;
+	}
+	if (kbState.ignoredFolders.includes(node.path)) {
+		kbState.ignoredFolders = kbState.ignoredFolders.filter(folder => folder !== node.path);
+	}
+	else {
+		kbState.ignoredFolders.push(node.path);
+	}
+	saveKBState(kbState);
+	engine.setIgnoredFolders(kbState.ignoredFolders);
+	renderDocList();
+	await updateVectorsAfterChange();
+}
+
 async function handleFileUpload(e: Event): Promise<void> {
 	const target = e.target as HTMLInputElement;
 	const files = Array.from(target.files || []);
-	if (!files.length) {
+	if (!files.length || preparationRunning || sendBtn.disabled) {
 		return;
 	}
 	await initializationPromise;
-
-	const folderName = `瀵煎叆 ${importCounter++}`;
-	const folder: DocNode = { name: folderName, path: folderName, collapsed: false, children: [], files: [] };
-
-	let totalChunks = 0;
-	let vectorCacheChanged = false;
-	for (const file of files) {
-		try {
-			const text = await file.text();
-			const sourceKey = getSourceKey(folderName, file.name);
-			const vectors = await engine.addDocumentWithVectors(sourceKey, text);
-			folder.files.push(file.name);
-			totalChunks += vectors.length;
-			// 鎸佷箙鍖栫敤鎴锋枃妗?
-			saveUserDocument(sourceKey, text);
-			await cacheUserDocumentVectors(sourceKey, text, vectors);
-			vectorCacheChanged = true;
+	sendBtn.disabled = true;
+	fileInput.disabled = true;
+	prepareAiBtn.disabled = true;
+	docList.inert = true;
+	try {
+		const folderName = `导入 ${importCounter++}`;
+		const folder: DocNode = { name: folderName, path: folderName, collapsed: false, children: [], files: [] };
+		for (const file of files) {
+			try {
+				const text = await file.text();
+				const sourceKey = getSourceKey(folderName, file.name);
+				await engine.addTextDocument(sourceKey, text);
+				folder.files.push(file.name);
+				saveUserDocument(sourceKey, text);
+				knowledgeBaseReady = false;
+			}
+			catch (error) {
+				addSystemMessage(error instanceof Error ? error.message : String(error));
+			}
 		}
-		catch {
-			addSystemMessage(`璇诲彇鏂囦欢澶辫触: ${file.name}`);
+		if (folder.files.length > 0) {
+			rootNodes.push(folder);
+		}
+		kbState.importCounter = importCounter;
+		saveKBState(kbState);
+		renderDocList();
+		updatePreparationBanner();
+		addSystemMessage(eda.sys_I18n.text('Documents imported. After the first build, vectors update automatically.'));
+		fileInput.value = '';
+	}
+	finally {
+		sendBtn.disabled = false;
+		fileInput.disabled = false;
+		prepareAiBtn.disabled = false;
+		docList.inert = false;
+		if (configReloadPending) {
+			location.reload();
 		}
 	}
-	if (vectorCacheChanged) {
-		await persistUserVectorCache();
-	}
-
-	if (folder.files.length > 0) {
-		rootNodes.push(folder);
-	}
-
-	// 淇濆瓨瀵煎叆璁℃暟鍣?
-	kbState.importCounter = importCounter;
-	saveKBState(kbState);
-
-	renderDocList();
-	// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder
-	addSystemMessage(eda.sys_I18n.text('Imported ${1} files to "${2}", total ${3} chunks.', undefined, undefined, String(files.length), folderName, String(totalChunks)));
-	fileInput.value = '';
+	await updateVectorsAfterChange();
 }
 
-// ============================================================
-// 鏂囦欢澶规搷浣?
-// ============================================================
 function toggleNode(node: DocNode): void {
 	node.collapsed = !node.collapsed;
 	renderDocList();
@@ -634,6 +692,8 @@ function renameNode(node: DocNode, headerEl: HTMLElement): void {
 			updateNodePaths(node, newPath);
 			// 鏇存柊 engine 涓殑 source keys
 			const newKeys = collectSourceKeys(node);
+			kbState.ignoredFolders = renameIgnoredFolders(kbState.ignoredFolders, oldPath, newPath);
+			engine.setIgnoredFolders(kbState.ignoredFolders);
 			let userDocumentsChanged = false;
 			for (let i = 0; i < oldKeys.length; i++) {
 				await engine.renameSource(oldKeys[i], newKeys[i]);
@@ -642,21 +702,15 @@ function renameNode(node: DocNode, headerEl: HTMLElement): void {
 					delete kbState.userDocuments[oldKeys[i]];
 					userDocumentsChanged = true;
 				}
-				const cachedDocument = userVectorCache.documents[oldKeys[i]];
-				if (cachedDocument) {
-					userVectorCache.documents[newKeys[i]] = {
-						...cachedDocument,
-						vectors: cachedDocument.vectors.map(vector => ({ ...vector, source: newKeys[i] })),
-					};
-					delete userVectorCache.documents[oldKeys[i]];
-				}
 			}
-			if (userDocumentsChanged) {
+			if (userDocumentsChanged || kbState.ignoredFolders.length > 0) {
 				saveKBState(kbState);
 			}
-			await persistUserVectorCache();
 		}
 		renderDocList();
+		if (newName !== oldName) {
+			await updateVectorsAfterChange();
+		}
 	};
 
 	input.addEventListener('blur', commit);
@@ -688,7 +742,7 @@ function deleteNode(node: DocNode, parentArray: DocNode[]): void {
 		eda.sys_I18n.text('Delete'),
 		eda.sys_I18n.text('Cancel'),
 		async (confirmed: boolean) => {
-			if (!confirmed) {
+			if (!confirmed || sendBtn.disabled || preparationRunning) {
 				return;
 			}
 			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Deleting, please do not close the page or browser...'), 1, 3);
@@ -700,18 +754,20 @@ function deleteNode(node: DocNode, parentArray: DocNode[]): void {
 			for (const key of sourceKeys) {
 				if (Object.prototype.hasOwnProperty.call(kbState.userDocuments, key)) {
 					removeUserDocument(key);
-					delete userVectorCache.documents[key];
 				}
 				else {
 					markSourceDeleted(key);
 				}
 			}
-			await persistUserVectorCache();
 			const idx = parentArray.indexOf(node);
+			kbState.ignoredFolders = kbState.ignoredFolders.filter(folder => !isPathWithin(folder, node.path));
+			saveKBState(kbState);
+			engine.setIgnoredFolders(kbState.ignoredFolders);
 			if (idx >= 0) {
 				parentArray.splice(idx, 1);
 			}
 			renderDocList();
+			await updateVectorsAfterChange();
 			// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder syntax
 			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Deleted folder "${1}"', undefined, undefined, node.name), 0, 3);
 		},
@@ -727,7 +783,7 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 		eda.sys_I18n.text('Delete'),
 		eda.sys_I18n.text('Cancel'),
 		async (confirmed: boolean) => {
-			if (!confirmed) {
+			if (!confirmed || sendBtn.disabled || preparationRunning) {
 				return;
 			}
 			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Deleting, please do not close the page or browser...'), 1, 3);
@@ -736,8 +792,6 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 			// 鏍囪涓哄凡鍒犻櫎锛堢敤浜庡唴缃煡璇嗗簱锛夋垨浠庣敤鎴锋枃妗ｄ腑绉婚櫎
 			if (Object.prototype.hasOwnProperty.call(kbState.userDocuments, sourceKey)) {
 				removeUserDocument(sourceKey);
-				delete userVectorCache.documents[sourceKey];
-				await persistUserVectorCache();
 			}
 			else {
 				markSourceDeleted(sourceKey);
@@ -751,6 +805,7 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 				}
 			}
 			renderDocList();
+			await updateVectorsAfterChange();
 			// eslint-disable-next-line no-template-curly-in-string -- i18n placeholder syntax
 			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Deleted "${1}"', undefined, undefined, file), 0, 3);
 		},
@@ -760,12 +815,15 @@ function removeFileFromNode(node: DocNode, fileIdx: number, parentArray: DocNode
 // ============================================================
 // RAG 闂瓟
 // ============================================================
-let currentAbortController: AbortController | null = null;
-let stopped = false;
-let localLLM: LocalLLM | null = null;
-
 stopBtn.addEventListener('click', () => {
 	stopped = true;
+	if (preparationRunning) {
+		currentAbortController?.abort();
+		engine.cancelEmbeddingPreparation();
+		localLLM?.dispose();
+		localLLM = null;
+		return;
+	}
 	if (currentAbortController) {
 		currentAbortController.abort();
 		currentAbortController = null;
@@ -776,17 +834,28 @@ stopBtn.addEventListener('click', () => {
 	}
 	stopBtn.style.display = 'none';
 	sendBtn.disabled = false;
+	updatePreparationBanner();
 });
 
 async function handleSend(): Promise<void> {
+	if (sendBtn.disabled || preparationRunning) {
+		return;
+	}
 	const question = userInput.value.trim();
 	if (!question) {
 		return;
 	}
 	await initializationPromise;
+	if (!isAIReady() && currentMode === 'ai') {
+		updatePreparationBanner();
+		addSystemMessage(eda.sys_I18n.text('Click Start Building in the banner before asking a question.'));
+		return;
+	}
 
 	userInput.value = '';
 	sendBtn.disabled = true;
+	fileInput.disabled = true;
+	docList.inert = true;
 	stopBtn.style.display = '';
 	stopped = false;
 	currentAbortController = new AbortController();
@@ -802,7 +871,7 @@ async function handleSend(): Promise<void> {
 		if (currentMode === 'index') {
 			await handleIndexSearch(question, statusDiv);
 		}
-		else if (currentMode === 'local') {
+		else if (!config.chatUseAPI) {
 			await handleLocalQuery(question, statusDiv);
 		}
 		else {
@@ -819,7 +888,12 @@ async function handleSend(): Promise<void> {
 		currentAbortController = null;
 		stopBtn.style.display = 'none';
 		sendBtn.disabled = false;
+		fileInput.disabled = false;
+		docList.inert = false;
 		userInput.focus();
+		if (configReloadPending) {
+			location.reload();
+		}
 	}
 }
 
@@ -885,8 +959,8 @@ async function handleIndexSearch(question: string, statusDiv: HTMLElement): Prom
 
 /** API 妯″紡锛氳皟鐢ㄥ湪绾?API */
 async function handleApiQuery(question: string, statusDiv: HTMLElement): Promise<void> {
-	const cfg = loadConfig();
-	if (!cfg.apiKey || !cfg.model || !cfg.baseURL) {
+	const cfg = config;
+	if (!cfg.model || !cfg.baseURL) {
 		statusDiv.remove();
 		addMessage('system', eda.sys_I18n.text('Please configure API Key, model name and API URL in the Settings menu first'));
 		return;
@@ -933,27 +1007,8 @@ async function handleApiQuery(question: string, statusDiv: HTMLElement): Promise
 }
 
 async function handleLocalQuery(question: string, statusDiv: HTMLElement): Promise<void> {
-	const cfg = loadConfig();
-	const importedTextModel = cfg.localImportedModelsEnabled && cfg.textModelSource === 'imported'
-		? getImportedModel(cfg.textModelId)
-		: undefined;
-
-	if (!localLLM) {
-		localLLM = new LocalLLM({
-			device: cfg.localDevice,
-			onProgress: (msg) => {
-				statusDiv.textContent = `[Model] ${msg}`;
-				chatMessages.scrollTop = chatMessages.scrollHeight;
-			},
-			modelMirror: cfg.modelMirror,
-			modelName: cfg.localModel,
-			dtype: cfg.localDtype,
-			localMaxInputTokens: cfg.localMaxInputTokens,
-			importedModel: importedTextModel,
-		});
-	}
-
-	localLLM.setProgressHandler((message) => {
+	const cfg = config;
+	getLocalChatModel((message) => {
 		statusDiv.textContent = `[Model] ${message}`;
 		chatMessages.scrollTop = chatMessages.scrollHeight;
 	});
@@ -1254,16 +1309,19 @@ function addSystemMessage(text: string): void {
 /** 閫掑綊娓叉煋鏍戝舰鏂囦欢澶? */
 function renderNode(node: DocNode, parentArray: DocNode[], container: HTMLElement, depth: number): void {
 	const fileCount = countFiles(node);
+	const ignored = isSourceIgnored(node.path, kbState.ignoredFolders);
+	const inheritedIgnore = ignored && !kbState.ignoredFolders.includes(node.path);
 
 	// 鏂囦欢澶瑰ご
 	const header = document.createElement('div');
-	header.className = 'folder-header';
+	header.className = `folder-header${ignored ? ' ignored' : ''}`;
 	header.style.paddingLeft = `${4 + depth * 12}px`;
 	header.innerHTML = `<span class="folder-toggle">${node.collapsed ? '&#9654;' : '&#9660;'}</span>`
 		+ `<span class="folder-icon">&#128193;</span>`
 		+ `<span class="folder-name">${node.name}</span>`
 		+ `<span class="folder-count">${fileCount}</span>`
 		+ `<span class="folder-actions">`
+		+ `<button type="button" class="fa-ignore" aria-label="${eda.sys_I18n.text(ignored ? 'Include folder in AI knowledge base' : 'Ignore folder in AI knowledge base')}" title="${eda.sys_I18n.text(inheritedIgnore ? 'Ignored by parent folder' : ignored ? 'Include folder in AI knowledge base' : 'Ignore folder in AI knowledge base')}" aria-pressed="${ignored}" ${inheritedIgnore ? 'disabled' : ''}>⦸</button>`
 		+ `<span class="fa-edit" title="${eda.sys_I18n.text('Rename')}">&#9998;</span>`
 		+ `<span class="fa-del" title="${eda.sys_I18n.text('Delete folder')}">&#128465;</span>`
 		+ `</span>`;
@@ -1272,10 +1330,15 @@ function renderNode(node: DocNode, parentArray: DocNode[], container: HTMLElemen
 	// 浜嬩欢缁戝畾锛堥棴鍖呮崟鑾?node 寮曠敤锛?
 	header.addEventListener('click', (e) => {
 		const target = e.target as HTMLElement;
-		if (target.classList.contains('fa-edit') || target.classList.contains('fa-del')) {
+		if (target.classList.contains('fa-edit') || target.classList.contains('fa-del') || target.classList.contains('fa-ignore')) {
 			return;
 		}
 		toggleNode(node);
+	});
+
+	header.querySelector('.fa-ignore')!.addEventListener('click', (event) => {
+		event.stopPropagation();
+		void toggleIgnoredFolder(node);
 	});
 
 	header.querySelector('.fa-edit')!.addEventListener('click', (e) => {
@@ -1301,7 +1364,7 @@ function renderNode(node: DocNode, parentArray: DocNode[], container: HTMLElemen
 	for (let fli = 0; fli < node.files.length; fli++) {
 		const file = node.files[fli];
 		const item = document.createElement('div');
-		item.className = 'doc-item';
+		item.className = `doc-item${ignored ? ' ignored' : ''}`;
 		item.style.paddingLeft = `${8 + (depth + 1) * 12}px`;
 		item.innerHTML = `<span class="name" title="${file}">${file}</span>`
 			+ `<span class="remove">x</span>`;
@@ -1344,10 +1407,15 @@ function handleClearKB(): void {
 			importCounter = 1;
 			engine.clear();
 			// 娓呯┖鎸佷箙鍖栫姸鎬?
-			kbState = { deletedSources: [], userDocuments: {}, importCounter: 1 };
+			kbState = { deletedSources: [], userDocuments: {}, importCounter: 1, ignoredFolders: [] };
+			engine.setIgnoredFolders([]);
 			saveKBState(kbState);
-			userVectorCache = { version: 1, documents: {} };
 			await deleteVectorCache(userDocumentsVectorCacheKey);
+			await deleteVectorCache(activeVectorModelKey);
+			await deleteVectorJournal(activeVectorModelKey);
+			knowledgeBaseReady = false;
+			vectorBaselineAvailable = false;
+			updatePreparationBanner();
 			renderDocList();
 			chatMessages.innerHTML = '';
 			addSystemMessage(eda.sys_I18n.text('Knowledge base has been cleared.'));
