@@ -6,7 +6,7 @@
   "version": "1.10.2",
   "publisher": "EasyEDA",
   "engines": {
-    "eda": "^3.0.0"
+    "eda": "^3.0.0 || ^4.0.0"
   },
   "license": "Apache-2.0",
   "repository": {
