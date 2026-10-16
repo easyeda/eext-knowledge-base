@@ -1,12 +1,11 @@
 /**
- * 预构建的内置知识库向量
+ * 内置知识库文档文本，不包含向量。
  *
- * 由 iframe/prebuild-vectors.ts 在构建时生成。
- * 包含文档块文本、来源和预计算的向量，浏览器端直接加载，无需再做 embedding。
+ * 由 iframe/build-docs.ts 整理 Markdown 片段，用户在插件内构建向量。
  */
 
 // @ts-expect-error json imported via esbuild
-import builtinVectorsJson from './builtin-vectors.json';
+import builtinDocumentsJson from './builtin-documents.json';
 
 export interface VectorEntry {
 	text: string;
@@ -14,5 +13,4 @@ export interface VectorEntry {
 	vector: number[];
 }
 
-export const builtinVectors: VectorEntry[] = builtinVectorsJson;
-export { PREBUILT_VECTOR_DTYPE, PREBUILT_VECTOR_MODEL_NAME } from './prebuilt-vector-info';
+export const builtinDocuments: Array<{ text: string; source: string }> = builtinDocumentsJson;

@@ -100,7 +100,6 @@ export class RAGEngine {
 	private allDocs: Document[] = [];
 	/** 与 allDocs 一一对应的向量缓存，避免删除/重建时重新 embedding */
 	private allVectors: number[][] = [];
-	private prebuiltCount = 0;
 	private chatHistory: Array<{ role: string; content: string }> = [];
 	/** 本地关键词搜索索引 */
 	private searchIndex: SearchIndex = new SearchIndex();
@@ -131,14 +130,7 @@ export class RAGEngine {
 		});
 	}
 
-	/**
-	 * 加载预构建向量（bge-large，维度一致，直接注入 store）
-	 */
-	async loadPrebuiltVectors(entries: Array<{ text: string; source: string; vector: number[] }>): Promise<number> {
-		return this.loadVectorEntries(entries, true);
-	}
-
-	async loadVectorEntries(entries: Array<{ text: string; source: string; vector: number[] }>, prebuilt = false): Promise<number> {
+	async loadVectorEntries(entries: Array<{ text: string; source: string; vector: number[] }>): Promise<number> {
 		if (entries.length === 0) {
 			return 0;
 		}
@@ -151,9 +143,6 @@ export class RAGEngine {
 
 		this.allDocs.push(...docs);
 		this.allVectors.push(...vectors);
-		if (prebuilt) {
-			this.prebuiltCount = entries.length;
-		}
 		this.docVersion++;
 
 		if (!this.vectorStore) {

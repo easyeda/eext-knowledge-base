@@ -1,11 +1,12 @@
 import type { VectorEntry } from './builtin-docs';
 import type { RAGConfig } from './rag';
 import { marked } from 'marked';
-import { builtinVectors, PREBUILT_VECTOR_MODEL_NAME } from './builtin-docs';
+import { builtinDocuments } from './builtin-docs';
+import { DEFAULT_EMBEDDING_MODEL } from './embedding-defaults';
 import { normalizeDevice } from './inference-device';
 import { isPathWithin, isSourceIgnored, renameIgnoredFolders } from './knowledge-policy';
 import { LocalLLM } from './local-llm';
-import { apiVectorCacheKey, canUsePrebuiltVectors, normalizeProviders } from './model-config';
+import { apiVectorCacheKey, normalizeProviders } from './model-config';
 import { getImportedModel } from './model-store';
 import { RAGEngine } from './rag';
 import { chatModelName, embeddingModelName as normalizeEmbeddingModel } from './remote-models';
@@ -52,7 +53,7 @@ function saveKBState(state: KBState): void {
 
 let kbState = loadKBState();
 
-function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: string; localDtype?: string; localImportedModelsEnabled?: boolean; usePrebuiltVectors?: boolean; textModelSource?: 'remote' | 'imported'; textModelId?: string; embeddingModelSource?: 'remote' | 'imported'; embeddingModelId?: string; embeddingVectorRebuildToken?: string } {
+function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: string; localDtype?: string; localImportedModelsEnabled?: boolean; textModelSource?: 'remote' | 'imported'; textModelId?: string; embeddingModelSource?: 'remote' | 'imported'; embeddingModelId?: string; embeddingVectorRebuildToken?: string } {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (raw) {
@@ -74,7 +75,6 @@ function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: strin
 				localDtype: obj.localDtype || '',
 				localMaxInputTokens: obj.localMaxInputTokens,
 				localImportedModelsEnabled: !!obj.localImportedModelsEnabled,
-				usePrebuiltVectors: obj.usePrebuiltVectors !== false,
 				textModelId: obj.textModelId || '',
 				embeddingModelId: obj.embeddingModelId || '',
 				embeddingVectorRebuildToken: obj.embeddingVectorRebuildToken || '',
@@ -84,7 +84,7 @@ function loadConfig(): RAGConfig & { embeddingModel?: string; localModel?: strin
 		}
 	}
 	catch { /* ignore */ }
-	return { ...normalizeProviders({}), apiType: 'openai', apiKey: '', model: '', baseURL: '', modelMirror: '', embeddingModel: '', localModel: '', localDtype: '', localImportedModelsEnabled: false, usePrebuiltVectors: true, textModelId: '', embeddingModelId: '', embeddingVectorRebuildToken: '', enableThinking: false, historyRounds: 3 };
+	return { ...normalizeProviders({}), apiType: 'openai', apiKey: '', model: '', baseURL: '', modelMirror: '', embeddingModel: '', localModel: '', localDtype: '', localImportedModelsEnabled: false, textModelId: '', embeddingModelId: '', embeddingVectorRebuildToken: '', enableThinking: false, historyRounds: 3 };
 }
 
 function saveConfig(config: ReturnType<typeof loadConfig>): void {
@@ -183,8 +183,7 @@ function ensureFolder(parent: DocNode[], parentPath: string, segments: string[])
 // ============================================================
 const config = loadConfig();
 const importedEmbeddingModel = !config.embeddingUseAPI && config.embeddingModelSource === 'imported' ? getImportedModel(config.embeddingModelId) : undefined;
-const embeddingModelName = config.embeddingModel || PREBUILT_VECTOR_MODEL_NAME;
-const usePrebuiltVectors = canUsePrebuiltVectors(config, embeddingModelName);
+const embeddingModelName = config.embeddingModel || DEFAULT_EMBEDDING_MODEL;
 const embeddingAPI = config.embeddingUseAPI
 	? {
 			apiKey: config.embeddingApiKey || '',
@@ -197,7 +196,7 @@ const activeVectorModelKey = embeddingAPI
 	? apiVectorCacheKey(embeddingAPI)
 	: importedEmbeddingModel
 		? importedVectorCacheKey(importedEmbeddingModel.id, importedEmbeddingModel.selectedDtype)
-		: remoteVectorCacheKey(embeddingModelName || PREBUILT_VECTOR_MODEL_NAME);
+		: remoteVectorCacheKey(embeddingModelName);
 const userDocumentsVectorCacheKey = userVectorCacheKey(activeVectorModelKey);
 let knowledgeBaseReady = false;
 let vectorBaselineAvailable = false;
@@ -405,8 +404,8 @@ async function initializeKnowledgeBase(): Promise<void> {
 	try {
 		engine.clear();
 		rootNodes.length = 0;
-		const builtin = builtinVectors.filter(entry => !kbState.deletedSources.includes(entry.source));
-		engine.loadTextEntries(builtin.map(entry => ({ text: entry.text, source: entry.source })));
+		const builtin = builtinDocuments.filter(entry => !kbState.deletedSources.includes(entry.source));
+		engine.loadTextEntries(builtin);
 		for (const entry of builtin) {
 			registerSource(entry.source);
 		}
@@ -416,10 +415,10 @@ async function initializeKnowledgeBase(): Promise<void> {
 		}
 		importCounter = kbState.importCounter;
 		engine.setIgnoredFolders(kbState.ignoredFolders);
+		const allowEmptyCache = engine.getTextEntries().length === 0;
 		vectorBaselineAvailable = !forceVectorRebuild && (
-			usePrebuiltVectors
-			|| await hasVectorCache(activeVectorModelKey)
-			|| await hasVectorCache(userDocumentsVectorCacheKey)
+			await hasVectorCache(activeVectorModelKey, allowEmptyCache)
+			|| await hasVectorCache(userDocumentsVectorCacheKey, allowEmptyCache)
 		);
 		renderDocList();
 	}
@@ -513,9 +512,6 @@ async function prepareAI(incrementalOnly = false): Promise<void> {
 				}
 			}
 		}
-		if (usePrebuiltVectors) {
-			cached.push(...builtinVectors);
-		}
 		if (controller.signal.aborted) {
 			throw new DOMException('Preparation canceled', 'AbortError');
 		}
@@ -538,10 +534,7 @@ async function prepareAI(incrementalOnly = false): Promise<void> {
 				retainedIgnored.set(key, entry);
 			}
 		}
-		const prebuiltTexts = usePrebuiltVectors ? new Set(builtinVectors.map(entry => entry.text)) : new Set<string>();
-		// Bundled vectors already persist in the extension; cache only additional content.
-		const persistentVectors = [...vectors, ...retainedIgnored.values()].filter(entry => !prebuiltTexts.has(entry.text));
-		await writeVectorCache(activeVectorModelKey, persistentVectors);
+		await writeVectorCache(activeVectorModelKey, [...vectors, ...retainedIgnored.values()]);
 		vectorBaselineAvailable = true;
 		await deleteVectorJournal(activeVectorModelKey);
 		await deleteVectorCache(userDocumentsVectorCacheKey);

@@ -10,8 +10,7 @@
 	},
 	"scripts": {
 		"compile:extension": "rimraf ./dist/ && ts-node ./config/esbuild.prod.ts",
-		"prebuild:vectors": "ts-node ./iframe/prebuild-vectors.ts",
-		"compile:iframe": "npm run prebuild:vectors && ts-node ./iframe/build.ts",
+		"compile:iframe": "ts-node ./iframe/build.ts",
 		"compile": "npm run compile:iframe && npm run compile:extension",
 		"lint": "eslint",
 		"fix": "eslint --fix",

@@ -1,5 +1,5 @@
 import type { VectorEntry } from './builtin-docs';
-import { PREBUILT_VECTOR_MODEL_NAME } from './prebuilt-vector-info';
+import { DEFAULT_EMBEDDING_MODEL } from './embedding-defaults';
 
 const VECTOR_CACHE_NAME = 'eext-ai-vector-cache-v1';
 const VECTOR_CACHE_PATH = '/__eext_vectors__';
@@ -38,7 +38,7 @@ export function importedVectorCacheKey(modelId: string, dtype?: string): string 
 }
 
 export function remoteVectorCacheKey(modelName?: string): string {
-	return `remote-${modelName || PREBUILT_VECTOR_MODEL_NAME}`;
+	return `remote-${modelName || DEFAULT_EMBEDDING_MODEL}`;
 }
 
 export function userVectorCacheKey(modelKey: string): string {
@@ -88,9 +88,26 @@ export async function readVectorCache(key: string): Promise<VectorEntry[] | null
 	}
 }
 
-export async function hasVectorCache(key: string): Promise<boolean> {
+export async function hasVectorCache(key: string, allowEmpty = false): Promise<boolean> {
 	const cache = await caches.open(VECTOR_CACHE_NAME);
-	return !!await cache.match(cacheRequest(key));
+	const response = await cache.match(cacheRequest(key));
+	if (!response) {
+		return false;
+	}
+	try {
+		const parsed = await response.json();
+		if (Array.isArray(parsed)) {
+			return allowEmpty || parsed.length > 0;
+		}
+		if (parsed?.version === 2) {
+			return Number.isSafeInteger(parsed.chunks) && parsed.chunks >= 0 && (allowEmpty || parsed.chunks > 0);
+		}
+		if (parsed?.version === 1 && parsed.documents && typeof parsed.documents === 'object') {
+			return Object.values(parsed.documents as UserVectorCache['documents']).some(document => Array.isArray(document?.vectors) && document.vectors.length > 0);
+		}
+	}
+	catch { /* Invalid or empty legacy caches must not trigger a new automatic full build. */ }
+	return false;
 }
 
 export async function writeVectorCache(key: string, entries: VectorEntry[]): Promise<void> {

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import process from 'node:process';
 import esbuild from 'esbuild';
 import { transformersLargeFiles } from '../config/transformers-large-files';
+import { buildBuiltinDocuments } from './build-docs';
 
 const ortDist = dirname(require.resolve('onnxruntime-web'));
 const nativeLoader = readFileSync(join(ortDist, 'ort-wasm-simd-threaded.asyncify.mjs'), 'utf8');
@@ -14,7 +15,8 @@ const ortDefines = {
 };
 
 async function main(): Promise<void> {
-// 1. Build worker first
+	await buildBuiltinDocuments();
+	// 1. Build worker first
 	await esbuild.build({
 		plugins: [transformersLargeFiles()],
 		entryPoints: ['iframe/src/local-llm-worker.ts'],

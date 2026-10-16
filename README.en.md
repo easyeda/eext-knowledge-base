@@ -27,7 +27,6 @@ Import Markdown documents to build a knowledge base. When a question is asked, t
 
 ![alt text](images/2.gif)
 
-
 ### Local Mode
 
 ![alt text](images/image4.png)
@@ -38,7 +37,7 @@ The extension is built with Transformers.js and supports ONNX models. On first u
 
 #### Embedding Models
 
-Embeddings for bundled documents are precomputed at build time. Only the default mirror embedding model automatically reuses these vectors when Use prebuilt vectors is enabled. API, imported and other mirror models automatically load existing caches; without a cache, click Start Building to build and cache missing chunks. Vectors from different models cannot be mixed, even when their dimensions match.
+The extension bundles built-in document text only, without precomputed vectors. Building the `.eext` does not download Embedding models or compute vectors. On first use, configure an Embedding model and click **Start Building** in the assistant to build complete vectors for all included built-in and imported documents. Ignored or deleted documents are excluded. API, mirror and imported models use the same process. Vectors are cached locally in chunks and interrupted builds can resume. Reopening automatically loads the active model's cache and computes only missing chunks; selecting a model without a cache requires a new build. Vectors from different models cannot be mixed, even when their dimensions match.
 
 #### LLMs
 

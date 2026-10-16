@@ -13,7 +13,7 @@
 /iframe/src/
 /iframe/build.ts
 /iframe/docs/
-/iframe/prebuild-vectors.ts
+/iframe/build-docs.ts
 /iframe/local-llm-worker.js
 /.editorconfig
 /.gitattributes

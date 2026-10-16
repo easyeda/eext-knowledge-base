@@ -1,5 +1,3 @@
-import { PREBUILT_VECTOR_MODEL_NAME } from './prebuilt-vector-info';
-
 export interface EmbeddingAPIConfig {
 	apiKey: string;
 	baseURL: string;
@@ -15,7 +13,6 @@ export interface ProviderConfig {
 	localImportedModelsEnabled?: boolean;
 	textModelSource?: 'remote' | 'imported';
 	embeddingModelSource?: 'remote' | 'imported';
-	usePrebuiltVectors?: boolean;
 }
 
 export function normalizeProviders(config: ProviderConfig) {
@@ -25,11 +22,6 @@ export function normalizeProviders(config: ProviderConfig) {
 		textModelSource: config.chatUseAPI === undefined && !config.localImportedModelsEnabled ? 'remote' as const : config.textModelSource || 'remote',
 		embeddingModelSource: config.embeddingUseAPI === undefined && !config.localImportedModelsEnabled ? 'remote' as const : config.embeddingModelSource || 'remote',
 	};
-}
-
-export function canUsePrebuiltVectors(config: ProviderConfig, modelName: string): boolean {
-	return !config.embeddingUseAPI && config.embeddingModelSource !== 'imported'
-		&& config.usePrebuiltVectors !== false && modelName === PREBUILT_VECTOR_MODEL_NAME;
 }
 
 export function apiVectorCacheKey(config: EmbeddingAPIConfig): string {

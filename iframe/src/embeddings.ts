@@ -1,8 +1,8 @@
 import type { EmbeddingsParams } from '@langchain/core/embeddings';
 import type { InferenceOptions } from './inference-client';
 import { Embeddings } from '@langchain/core/embeddings';
+import { DEFAULT_EMBEDDING_DTYPE, DEFAULT_EMBEDDING_MODEL } from './embedding-defaults';
 import { InferenceClient } from './inference-client';
-import { PREBUILT_VECTOR_DTYPE, PREBUILT_VECTOR_MODEL_NAME } from './prebuilt-vector-info';
 
 export class LocalEmbeddings extends Embeddings {
 	private client: InferenceClient;
@@ -11,8 +11,8 @@ export class LocalEmbeddings extends Embeddings {
 		this.client = new InferenceClient({
 			...params,
 			kind: 'feature-extraction',
-			modelName: params?.modelName || PREBUILT_VECTOR_MODEL_NAME,
-			dtype: PREBUILT_VECTOR_DTYPE,
+			modelName: params?.modelName || DEFAULT_EMBEDDING_MODEL,
+			dtype: DEFAULT_EMBEDDING_DTYPE,
 			onProgress: message => params?.onProgress?.(eda.sys_I18n.text(message)),
 		});
 	}

@@ -1,9 +1,8 @@
 import type { ImportedModel, ImportedModelKind } from './model-store';
 import { InferenceClient } from './inference-client';
 import { normalizeDevice } from './inference-device';
-import { canUsePrebuiltVectors, normalizeProviders } from './model-config';
+import { normalizeProviders } from './model-config';
 import { commitImportedModel, deleteImportedModel, formatBytes, listImportedModels, stageImportedModel, updateImportedModel } from './model-store';
-import { PREBUILT_VECTOR_DTYPE, PREBUILT_VECTOR_MODEL_NAME } from './prebuilt-vector-info';
 import { embeddingModelName } from './remote-models';
 import { deleteVectorCache, deleteVectorJournal, importedVectorCacheKey } from './vector-cache';
 
@@ -21,7 +20,6 @@ interface AssistantConfig {
 	embeddingModelId?: string;
 	embeddingVectorRebuildToken?: string;
 	localImportedModelsEnabled?: boolean;
-	usePrebuiltVectors?: boolean;
 	chatUseAPI?: boolean;
 	embeddingUseAPI?: boolean;
 	embeddingModel?: string;
@@ -200,13 +198,6 @@ function renderModelList(kind: ImportedModelKind): void {
 	}
 }
 
-function renderPrebuiltVectorInfo(): void {
-	const el = document.getElementById('prebuilt-vector-info');
-	if (el) {
-		el.textContent = t('Prebuilt Vector Build Info', PREBUILT_VECTOR_MODEL_NAME, PREBUILT_VECTOR_DTYPE);
-	}
-}
-
 function activateModel(model: ImportedModel): void {
 	const config = readConfig();
 	if (model.kind === 'text-generation') {
@@ -225,10 +216,6 @@ function activateModel(model: ImportedModel): void {
 
 async function requestVectorRebuild(): Promise<void> {
 	const config = readConfig();
-	if (canUsePrebuiltVectors(config, embeddingModelName(config.embeddingModel))) {
-		setStatus(t('Prebuilt vectors are enabled. Built-in vectors are reused; the active Embedding model still handles queries and imported docs.'));
-		return;
-	}
 	const model = !config.embeddingUseAPI && config.embeddingModelSource === 'imported' ? listImportedModels().find(item => item.id === config.embeddingModelId) : undefined;
 	if (!config.embeddingUseAPI && config.embeddingModelSource === 'imported' && !model) {
 		setStatus(t('The active imported Embedding model was not found.'), true);
@@ -337,4 +324,3 @@ document.getElementById('rebuild-vectors-btn')?.addEventListener('click', () => 
 renderModels();
 window.addEventListener('ai-assistant-provider-preview', renderModels);
 window.addEventListener('ai-assistant-config-updated', renderModels);
-renderPrebuiltVectorInfo();
